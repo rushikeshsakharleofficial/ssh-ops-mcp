@@ -1,0 +1,24 @@
+{
+  "defaultTarget": "production",
+  "defaults": {
+    "jumpProfile": "bastion",
+    "jumpUser": "relay",
+    "targetUser": "root"
+  },
+  "profiles": {
+    "production": {
+      "host": "server.example.com",
+      "user": "deploy",
+      "port": 22,
+      "connectTimeoutSec": 12,
+      "strictHostKeyChecking": "accept-new",
+      "extraArgs": []
+    },
+    "bastion": {
+      "host": "bastion.example.com",
+      "user": "operator",
+      "port": 22,
+      "extraArgs": []
+    }
+  }
+}

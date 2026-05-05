@@ -1,0 +1,20 @@
+defaultTarget: production
+defaults:
+  connectTimeoutSec: 12
+  strictHostKeyChecking: accept-new
+  timeoutMs: 120000
+  maxOutputBytes: 2000000
+  # Optional global jump routing:
+  # jumpProfile: bastion
+  # jumpUser: relay
+  # targetUser: root
+profiles:
+  production:
+    host: server.example.com
+    user: deploy
+    port: 22
+    extraArgs: []
+  # bastion:
+  #   host: bastion.example.com
+  #   user: operator
+  #   port: 22

@@ -1,0 +1,3 @@
+display_name: SSH Ops
+short_description: Use SSH Ops MCP tools for remote server checks.
+default_prompt: Check a remote server with SSH Ops.

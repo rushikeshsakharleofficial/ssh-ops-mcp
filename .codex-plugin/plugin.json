@@ -1,0 +1,39 @@
+{
+  "name": "ssh-ops",
+  "version": "0.1.0",
+  "description": "MCP and CLI helpers for running SSH-based server operations through reusable profiles.",
+  "author": {
+    "name": "Rushikesh Sakharle",
+    "url": "https://github.com/rushikeshsakharleofficial"
+  },
+  "homepage": "https://github.com/rushikeshsakharleofficial/ssh-ops-mcp",
+  "repository": "https://github.com/rushikeshsakharleofficial/ssh-ops-mcp",
+  "license": "MIT",
+  "keywords": [
+    "ssh",
+    "mcp",
+    "server-ops",
+    "inventory",
+    "devops"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SSH Ops",
+    "shortDescription": "Run reusable SSH inventory, health, disk, and command tasks.",
+    "longDescription": "SSH Ops exposes a small MCP server and CLI wrapper for remote Linux server checks. It reuses the local ssh binary, existing SSH config, and optional profile files without storing passwords or private keys.",
+    "developerName": "Rushikesh Sakharle",
+    "category": "Productivity",
+    "capabilities": [
+      "MCP Tools",
+      "Command Line",
+      "Remote Server Operations"
+    ],
+    "defaultPrompt": [
+      "Check my server hardware with SSH Ops.",
+      "Run a disk report on my default SSH profile.",
+      "Show failed services on my SSH server."
+    ],
+    "brandColor": "#10B981"
+  }
+}
