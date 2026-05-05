@@ -2,8 +2,6 @@ ssh-ops.config.yaml
 ssh-ops.config.yml
 ssh-ops.config.json
 .code-outline-graph/
-.mcp.json
-.claude/
-.codex/
+.claude/settings.local.json
 .cursor/
 .gemini/

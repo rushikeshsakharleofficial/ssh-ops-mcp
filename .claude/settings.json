@@ -1,0 +1,30 @@
+{
+  "enabledMcpjsonServers": [
+    "ssh-ops",
+    "code-outline"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-outline-graph update . 2>/dev/null; true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-outline-graph update . 2>/dev/null; true"
+          }
+        ]
+      }
+    ]
+  }
+}

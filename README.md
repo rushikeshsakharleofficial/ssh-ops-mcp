@@ -1,6 +1,26 @@
 # SSH Ops
 
-SSH Ops is a small Codex plugin that exposes SSH tasks as an MCP server and a plain Node CLI. It uses your local `ssh` binary, existing keys, and SSH config. It does not store passwords or private keys.
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. It works as a plugin for both **Codex** and **Claude Code**. It uses your local `ssh` binary, existing keys, and SSH config. It does not store passwords or private keys.
+
+## Installation
+
+### Codex
+
+1. Clone this repo into your Codex plugins directory (or wherever Codex loads plugins from).
+2. Codex reads `.codex-plugin/plugin.json` automatically and connects to the MCP server declared in `.mcp.json`.
+3. Skills from `skills/ssh-ops/SKILL.md` are loaded so Codex knows when and how to invoke the SSH tools.
+
+No extra config needed — Codex discovers and wires everything from the plugin manifest.
+
+### Claude Code
+
+1. Clone this repo and open it as a project in Claude Code (CLI or IDE extension).
+2. `.claude/settings.json` already has `enabledMcpjsonServers` set — Claude Code auto-enables the `ssh-ops` MCP server from `.mcp.json` on session start.
+3. `.claude/skills/ssh-ops.md` is loaded automatically so Claude knows when and how to invoke the SSH tools.
+
+No extra config needed — clone, open, and the MCP tools are available immediately.
+
+> **Prerequisite:** Node.js must be on your PATH so Claude Code can spawn `node scripts/ssh-mcp-server.mjs`.
 
 ## Configure
 
