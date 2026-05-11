@@ -52,7 +52,7 @@ Package manager is auto-detected: `apt-get` → `dnf` → `yum` → `apk` → `b
 **After dependencies:**
 - Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
 - Generates a device-specific AES-256-GCM encryption key at `~/.ssh-ops/.encryption-key` (0600)
-- Installs SSH Ops as a Claude Code + Gemini skill plugin (skill loads automatically in every session)
+- Installs SSH Ops as a **Claude Code skill plugin** (`.skill` ZIP — discovered by `/reload-plugins`) and a **Gemini CLI extension** (`~/.gemini/extensions/ssh-ops/` — enabled in `extension-enablement.json`)
 - Registers MCP server with every detected IDE/CLI tool
 - Re-running is idempotent — shows "Already registered" for each tool, only updates what changed
 - Config and encryption key preserved on re-install
@@ -250,6 +250,9 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 | `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
 | `ssh_cron` | Crontab CRUD for any user — list, add, remove |
 | `ssh_ip_assign` | Assign IPs to an interface permanently; accepts inline array, saved group, or local file |
+| `ssh_user` | User management — add/del/mod/list/info/passwd/lock/unlock; groups, shell, home, system accounts |
+| `ssh_chmod` | chmod + chown + chgrp in one call; optional recursive |
+| `ssh_sudo_rule` | Sudoers management via `/etc/sudoers.d/`; validates with `visudo -c`; specific commands, NOPASSWD toggle |
 
 ### IP Group Management
 
@@ -322,5 +325,10 @@ CLI options:
 - **Auth failure tracking** — SSH exit 255 with auth-failure stderr patterns marks the profile `_authFailed: true` in the dynamic config. Updating credentials clears the flag automatically.
 - **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately, persists via auto-detected network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local), then runs automatic verification: private IPs get gateway + self ping; public IPs get `ping -I $IP 8.8.8.8` + `curl --interface $IP` to confirm outbound traffic exits via the correct source IP. Accepts inline `ips`, a saved `group` name, or a `fromFile` path. `network-scripts` creates `ifcfg-eth0:N` aliases and skips already-persisted IPs.
 - **IP groups** — `ssh_save_ip_group` stores named IP sets (with iface, gateway, dns) in `ssh-ops.dynamic.json`. Reference by name in `ssh_ip_assign(group="name")` to apply the same set to multiple servers without repeating the IP list.
+- **User management** — `ssh_user` generates `useradd`/`userdel`/`usermod`/`chpasswd` scripts based on the action. Passwords set via `chpasswd` (pipe, not CLI arg). All actions verify the user exists before proceeding.
+- **Permissions** — `ssh_chmod` combines `chmod`/`chown`/`chgrp` in one call. When both `owner` and `group` are set, uses `chown owner:group` for efficiency. Shows `ls -la` before and after for confirmation.
+- **Sudoers** — `ssh_sudo_rule` writes to `/etc/sudoers.d/<username>` (never edits `/etc/sudoers` directly). Validates with `visudo -c` before accepting — invalid rules are auto-removed to prevent lockout. Supports specific command lists (e.g. `/bin/systemctl,/usr/bin/apt`) and `NOPASSWD` toggle.
+- **Skill activation** — Claude Code discovers skills from `.skill` ZIP archives. Installer creates `ssh-ops.skill` automatically. Run `/reload-plugins` after install. Gemini CLI uses `~/.gemini/extensions/ssh-ops/` which the installer creates and enables.
+- **New IP auto-login** — when given an IP not in profiles, SSH Ops tries to connect immediately using the same jump chain and user as existing profiles. Saves the profile on success; asks for credentials only on failure.
 - **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
