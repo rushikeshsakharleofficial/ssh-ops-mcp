@@ -137,6 +137,40 @@ profiles:
 
 This connects to `bastion` as `operator`, then runs `sudo -n -u relay ssh root@destination` from there — useful when the keys for internal servers live on the jump host.
 
+### IP assignment
+
+Assign IPs to a remote interface — applied immediately and persisted across reboots. Three ways to specify IPs:
+
+```
+# 1. Inline array
+ssh_ip_assign(target="prod", iface="eth0", ips=["192.168.1.100/24", "10.0.0.5/16"])
+
+# 2. Named group (define once, reuse everywhere)
+ssh_save_ip_group(name="web-cluster", iface="eth0",
+  ips=["192.168.1.100/24", "192.168.1.101/24"],
+  gateway="192.168.1.1", dns=["8.8.8.8"])
+
+ssh_ip_assign(target="prod1", group="web-cluster")
+ssh_ip_assign(target="prod2", group="web-cluster")
+
+# 3. Local file (JSON or YAML)
+ssh_ip_assign(target="prod", fromFile="./configs/prod-ips.yaml")
+```
+
+Inline `ips`/`iface`/`gateway`/`dns` params always override group or file values.
+
+Auto-detects persistence method in priority order:
+
+| Method | Triggered when | Writes to |
+|--------|---------------|-----------|
+| `netplan` | `netplan` binary + `/etc/netplan/` exists | `/etc/netplan/99-ssh-ops-<iface>.yaml` |
+| `networkmanager` | `NetworkManager` service active | `nmcli connection modify` |
+| `network-scripts` | `/etc/sysconfig/network-scripts/` exists | `ifcfg-<iface>:N` alias files |
+| `systemd-networkd` | `systemd-networkd` service active | `/etc/systemd/network/99-ssh-ops-<iface>.network` |
+| `rc.local` | Fallback | Appends `ip addr add` before `exit 0` |
+
+Override with `method="netplan"` etc. Existing IPs skipped (idempotent). Always requires sudo.
+
 ### Auth failure handling
 
 When credentials fail, the profile is automatically flagged `_authFailed: true` in the dynamic config. The next command returns:
@@ -186,7 +220,15 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 | `ssh_service` | Systemd service control — status, start, stop, restart, enable, disable |
 | `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
 | `ssh_cron` | Crontab CRUD for any user — list, add, remove |
-| `ssh_ip_assign` | Assign one or more IP addresses (CIDR) to a network interface, applied immediately and persisted permanently |
+| `ssh_ip_assign` | Assign IPs to an interface permanently; accepts inline array, saved group, or local file |
+
+### IP Group Management
+
+| Tool | Description |
+|------|-------------|
+| `ssh_save_ip_group` | Save a named IP set (ips, iface, gateway, dns) for reuse across servers |
+| `ssh_remove_ip_group` | Remove a saved IP group |
+| `ssh_list_ip_groups` | List all saved IP groups |
 
 ### Profile Management
 
@@ -248,6 +290,7 @@ CLI options:
 - **Password auth** — profiles with a password use `sshpass -e` with the decrypted password injected via the `SSHPASS` env var. Password never appears in process args. Requires `sshpass` installed locally.
 - **Encryption** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device key generated at install time (`~/.ssh-ops/.encryption-key`, 0600). Passwords from one machine cannot be decrypted on another.
 - **Auth failure tracking** — SSH exit 255 with auth-failure stderr patterns marks the profile `_authFailed: true` in the dynamic config. Updating credentials clears the flag automatically.
-- **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately then auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) to persist the assignment across reboots.
+- **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately then auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) to persist across reboots. Accepts inline `ips` array, a saved `group` name, or a `fromFile` path to a local JSON/YAML file. `network-scripts` mode creates `ifcfg-eth0:N` alias files and skips IPs already persisted (idempotent).
+- **IP groups** — `ssh_save_ip_group` stores named IP sets (with iface, gateway, dns) in `ssh-ops.dynamic.json`. Reference by name in `ssh_ip_assign(group="name")` to apply the same set to multiple servers without repeating the IP list.
 - **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
