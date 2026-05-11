@@ -18,6 +18,9 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_file_patch`: edit remote file (line-range or regex) — CONFIRM with user before calling unless told to proceed automatically
 - `ssh_service`: systemd control — CONFIRM for start/stop/restart/enable/disable unless told automatically
 - `ssh_log_search`: search journal or log file by pattern
+- `ssh_network_check`: ping, port probe, TLS cert check from remote server
+- `ssh_package`: package management (apt/yum/dnf/apk auto-detect) — CONFIRM for install/remove/update/upgrade unless told automatically
+- `ssh_cron`: crontab list/add/remove for any user — CONFIRM for add/remove unless told automatically
 
 CLI fallback from plugin root when MCP unavailable:
 

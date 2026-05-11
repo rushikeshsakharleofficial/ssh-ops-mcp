@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  cronScript,
   diskReportScript,
   filePatchScript,
   fileReadScript,
@@ -10,6 +11,8 @@ import {
   healthReportScript,
   listProfiles,
   logSearchScript,
+  networkCheckScript,
+  packageScript,
   PLUGIN_ROOT,
   runMultiSshCommand,
   runSshCommand,
@@ -334,6 +337,59 @@ const tools = [
       },
       required: ["targets", "command"]
     }
+  },
+  {
+    name: "ssh_network_check",
+    title: "SSH Network Check",
+    description: "Check network reachability from a remote SSH server: ping, port probe, TLS cert. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        host: { type: "string", description: "Host to probe from the SSH server." },
+        port: { type: "number", description: "Port to check reachability." },
+        ping: { type: "boolean", description: "Run ping. Default true." },
+        tls: { type: "boolean", description: "Check TLS cert. Requires port." },
+        timeoutMs: { type: "number", description: "Timeout ms. Default 30000." }
+      },
+      required: ["host"]
+    }
+  },
+  {
+    name: "ssh_package",
+    title: "SSH Package Management",
+    description: "Manage packages on a remote host. Auto-detects apt/yum/dnf/apk. CONFIRM before install/remove/update/upgrade unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["list", "search", "install", "remove", "update", "upgrade"],
+          description: "Package action."
+        },
+        packages: { type: "array", items: { type: "string" }, description: "Package names." },
+        sudo: { type: "boolean", description: "Use sudo -n. Default true." },
+        timeoutMs: { type: "number", description: "Timeout ms. Default 120000." }
+      },
+      required: ["action"]
+    }
+  },
+  {
+    name: "ssh_cron",
+    title: "SSH Cron Management",
+    description: "Manage crontab entries on a remote host. Supports any user via sudo. CONFIRM before add/remove unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: { type: "string", enum: ["list", "add", "remove"], description: "Cron action." },
+        user: { type: "string", description: "Crontab owner. Omit for current SSH user." },
+        schedule: { type: "string", description: "Cron schedule, 5 fields (e.g. '0 * * * *'). Required for add." },
+        command: { type: "string", description: "Command. Required for add/remove." }
+      },
+      required: ["action"]
+    }
   }
 ];
 
@@ -456,6 +512,38 @@ async function callTool(name, args) {
     const text = formatMultiRunResult(results, args.format || "text");
     const hasError = results.some((r) => r.exitCode !== 0 || r.exitCode === null);
     return textResult(text, hasError);
+  }
+
+  if (name === "ssh_network_check") {
+    const command = networkCheckScript({
+      host: args.host,
+      port: args.port,
+      ping: args.ping !== false,
+      tls: Boolean(args.tls)
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 30_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_package") {
+    const command = packageScript({
+      action: args.action,
+      packages: Array.isArray(args.packages) ? args.packages : [],
+      sudo: args.sudo !== false
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_cron") {
+    const command = cronScript({
+      action: args.action,
+      user: args.user,
+      schedule: args.schedule,
+      command: args.command
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   return textResult(`Unknown tool: ${name}`, true);
