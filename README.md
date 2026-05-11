@@ -1,52 +1,58 @@
 # SSH Ops
 
-SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. It works as a plugin for both **Codex** and **Claude Code**. It uses your local `ssh` binary, existing keys, and SSH config. It does not store passwords or private keys.
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works as a plugin for **Claude Code** and **Codex**. Uses your local `ssh` binary, existing keys, and SSH config. Does not store passwords or private keys.
 
-## Installation
-
-### Codex
-
-1. Clone this repo into your Codex plugins directory (or wherever Codex loads plugins from).
-2. Codex reads `.codex-plugin/plugin.json` automatically and connects to the MCP server declared in `.mcp.json`.
-3. Skills from `skills/ssh-ops/SKILL.md` are loaded so Codex knows when and how to invoke the SSH tools.
-
-No extra config needed — Codex discovers and wires everything from the plugin manifest.
+## One-Click Install
 
 ### Claude Code
 
-1. Clone this repo and open it as a project in Claude Code (CLI or IDE extension).
-2. `.claude/settings.json` already has `enabledMcpjsonServers` set — Claude Code auto-enables the `ssh-ops` MCP server from `.mcp.json` on session start.
-3. `.claude/skills/ssh-ops.md` is loaded automatically so Claude knows when and how to invoke the SSH tools.
+```bash
+git clone https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git
+cd ssh-ops-mcp
+claude mcp add ssh-ops node ./scripts/ssh-mcp-server.mjs
+```
 
-No extra config needed — clone, open, and the MCP tools are available immediately.
+Then configure your targets (see [Configure](#configure)) and start a new Claude Code session — the tools are live.
 
-> **Prerequisite:** Node.js must be on your PATH so Claude Code can spawn `node scripts/ssh-mcp-server.mjs`.
+> **Prerequisite:** Node.js on your PATH.
+
+### Codex
+
+```bash
+git clone https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git
+```
+
+Move or symlink the cloned folder into your Codex plugins directory. Codex reads `.codex-plugin/plugin.json` and `.mcp.json` automatically — no extra steps.
+
+---
 
 ## Configure
 
-Copy `ssh-ops.config.example.yaml` to `ssh-ops.config.yaml` and edit profiles there, or place the same YAML shape at `~/.ssh/ssh-ops.yaml`.
-
-`ssh-ops.config.yaml` is intentionally local so per-machine targets and key paths stay out of shared examples. Existing JSON config files still work for compatibility.
-
-## CLI
-
-From this plugin directory:
+Copy the example config and edit your profiles:
 
 ```bash
-node scripts/ssh-ops.mjs profiles
-node scripts/ssh-ops.mjs run production 'hostname; uptime'
-node scripts/ssh-ops.mjs inventory production
-node scripts/ssh-ops.mjs disk production / 1
-node scripts/ssh-ops.mjs health production
+cp ssh-ops.config.example.yaml ssh-ops.config.yaml
 ```
 
-You can also skip profiles and use a raw target:
+Or place the same YAML at `~/.ssh/ssh-ops.yaml` for a machine-wide default.
 
-```bash
-node scripts/ssh-ops.mjs inventory deploy@server.example.com
+```yaml
+defaultTarget: production
+defaults:
+  connectTimeoutSec: 12
+  strictHostKeyChecking: accept-new
+profiles:
+  production:
+    host: server.example.com
+    user: deploy
+    port: 22
 ```
 
-To route destination servers through a configured jump server, set these defaults:
+`ssh-ops.config.yaml` is gitignored — per-machine targets and key paths stay local. JSON config files also work.
+
+### Jump Server Routing
+
+To route all non-jump targets through a bastion:
 
 ```yaml
 defaults:
@@ -59,16 +65,61 @@ profiles:
     user: operator
 ```
 
-With that config, non-jump targets such as `app.example.com` first connect to `bastion` as `operator`, then run the destination SSH command as `relay` on the jump server so it can use that account's key for `root@app.example.com`. The jump profile itself still connects directly with its configured user.
+Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `root@<destination>`. The bastion profile itself connects directly.
+
+---
 
 ## MCP Tools
 
-The plugin exposes these MCP tools:
+| Tool | Description |
+|------|-------------|
+| `ssh_profiles` | List configured profiles without connecting |
+| `ssh_run` | Run an arbitrary remote command or script |
+| `ssh_inventory` | Read-only hardware and VM inventory (OS, CPU, RAM, disk, network) |
+| `ssh_disk_report` | Read-only filesystem, inode, and container storage report |
+| `ssh_health_report` | Read-only load, services, journal errors, processes, Docker snapshot |
+| `ssh_file_read` | Read a remote file |
+| `ssh_file_write` | Overwrite a remote file (backs up original by default) |
+| `ssh_service` | Start, stop, restart, enable, disable, or status a systemd service |
+| `ssh_log_search` | Search systemd journal or a log file by pattern |
 
-- `ssh_profiles`: list configured profiles without connecting.
-- `ssh_run`: run an arbitrary remote command or script.
-- `ssh_inventory`: read-only hardware and VM inventory.
-- `ssh_disk_report`: read-only filesystem and container storage report.
-- `ssh_health_report`: read-only load, service, journal, process, and Docker snapshot.
+The MCP server communicates over newline-delimited JSON-RPC on stdio.
 
-The MCP server uses newline-delimited JSON-RPC over stdio and writes only MCP messages to stdout.
+---
+
+## CLI
+
+```bash
+node scripts/ssh-ops.mjs profiles
+node scripts/ssh-ops.mjs run production 'hostname; uptime'
+node scripts/ssh-ops.mjs inventory production
+node scripts/ssh-ops.mjs disk production / 1
+node scripts/ssh-ops.mjs health production
+```
+
+Raw targets work without a profile:
+
+```bash
+node scripts/ssh-ops.mjs inventory deploy@server.example.com
+```
+
+CLI options:
+
+| Flag | Description |
+|------|-------------|
+| `--sudo` | Run via `sudo -n bash -s` |
+| `--raw` | Pass command as raw SSH remote command |
+| `--timeout-ms <ms>` | Local command timeout |
+| `--port <n>` | SSH port override |
+| `--identity-file <path>` | SSH private key |
+| `--jump-host <target>` | SSH jump host (`-J`) |
+| `--no-sudo` | Disable sudo in inventory |
+
+---
+
+## How It Works
+
+- **Config loading** — merges `ssh-ops.config.yaml` in the project root with `~/.ssh/ssh-ops.yaml`. Override with `SSH_OPS_CONFIG` env var.
+- **Script builders** — each tool generates a bash script piped to `bash -s` on the remote (no interactive shell needed).
+- **Two-hop routing** — when `jumpProfile` is set, the SSH command is wrapped in a nested `ssh` call executed on the jump server.
+- **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` creates a timestamped `.bak` before overwriting.
