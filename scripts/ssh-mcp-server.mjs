@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  addJumpServer,
   addProfile,
   cronScript,
   diskReportScript,
@@ -10,11 +11,13 @@ import {
   formatRunResult,
   hardwareInventoryScript,
   healthReportScript,
+  listJumpServers,
   listProfiles,
   logSearchScript,
   networkCheckScript,
   packageScript,
   PLUGIN_ROOT,
+  removeJumpServer,
   removeProfile,
   runMultiSshCommand,
   runSshCommand,
@@ -423,6 +426,46 @@ const tools = [
       },
       required: ["name"]
     }
+  },
+  {
+    name: "ssh_add_jump",
+    title: "Add Jump Server",
+    description: "Add a jump/bastion server and append it to the active jump chain. All subsequent SSH commands route through the chain using SSH -J multi-hop. Set commonUser to use a shared login name for all target connections without needing to specify user per profile.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Jump server name (alphanumeric, hyphens, underscores)." },
+        host: { type: "string", description: "Hostname or IP of the jump server." },
+        user: { type: "string", description: "SSH username on the jump server." },
+        port: { type: "number", description: "SSH port on the jump server. Default 22." },
+        password: { type: "string", description: "SSH password (stored AES-256-GCM encrypted). Requires sshpass locally." },
+        identityFile: { type: "string", description: "Path to SSH private key for this jump server." },
+        appendToChain: { type: "boolean", description: "Append to the active jump chain. Default true." },
+        commonUser: { type: "string", description: "Set a shared default user for ALL target connections that have no explicit user defined (e.g. 'deploy', 'ubuntu'). Stored in dynamic config defaults." }
+      },
+      required: ["name", "host"]
+    }
+  },
+  {
+    name: "ssh_remove_jump",
+    title: "Remove Jump Server",
+    description: "Remove a jump server and automatically remove it from the jump chain. Only MCP-added jump servers can be removed this way.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Jump server name to remove." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "ssh_list_jumps",
+    title: "List Jump Servers",
+    description: "Show the current jump chain, all configured jump servers, and the commonUser default. Does not connect to any host.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
   }
 ];
 
@@ -595,6 +638,33 @@ async function callTool(name, args) {
   if (name === "ssh_remove_profile") {
     const profiles = removeProfile(args.name);
     return textResult(JSON.stringify(profiles, null, 2));
+  }
+
+  if (name === "ssh_add_jump") {
+    const result = addJumpServer(
+      args.name,
+      {
+        host: args.host,
+        user: args.user,
+        port: args.port,
+        password: args.password,
+        identityFile: args.identityFile
+      },
+      {
+        appendToChain: args.appendToChain !== false,
+        commonUser: args.commonUser
+      }
+    );
+    return textResult(JSON.stringify(result, null, 2));
+  }
+
+  if (name === "ssh_remove_jump") {
+    const result = removeJumpServer(args.name);
+    return textResult(JSON.stringify(result, null, 2));
+  }
+
+  if (name === "ssh_list_jumps") {
+    return textResult(JSON.stringify(listJumpServers(), null, 2));
   }
 
   return textResult(`Unknown tool: ${name}`, true);

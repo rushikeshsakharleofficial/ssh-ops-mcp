@@ -605,3 +605,109 @@ test("removeProfile throws when profile not in dynamic config", async () => {
     /not found in dynamic config/i
   );
 });
+
+test("addJumpServer adds to profiles with _isJumpServer and appends to jumpChain", async () => {
+  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
+  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-jump-${Date.now()}`;
+  const { addJumpServer, removeJumpServer } = await import(moduleUrl);
+  try {
+    const result = addJumpServer("test-jump-bastion", { host: "10.1.0.1", user: "ops", port: 2222 });
+    assert.ok(result.jumpChain.includes("test-jump-bastion"), "should be in jumpChain");
+    assert.ok(result.jumpServers["test-jump-bastion"], "should be in jumpServers");
+    assert.equal(result.jumpServers["test-jump-bastion"].host, "10.1.0.1");
+    assert.equal(result.jumpServers["test-jump-bastion"].port, 2222);
+  } finally {
+    if (existsSync(dynPath)) {
+      try { removeJumpServer("test-jump-bastion"); } catch {}
+      const after = JSON.parse(rfs(dynPath, "utf8"));
+      if (Object.keys(after.profiles || {}).length === 0 && !after.defaults?.jumpChain?.length) {
+        unlinkSync(dynPath);
+      }
+    }
+  }
+});
+
+test("addJumpServer sets commonUser in dynamic defaults", async () => {
+  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
+  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-jump-cu-${Date.now()}`;
+  const { addJumpServer, removeJumpServer } = await import(moduleUrl);
+  try {
+    const result = addJumpServer(
+      "test-jump-cu",
+      { host: "10.1.0.2", user: "ops" },
+      { commonUser: "ubuntu" }
+    );
+    assert.equal(result.commonUser, "ubuntu", "commonUser should be set");
+  } finally {
+    if (existsSync(dynPath)) {
+      try { removeJumpServer("test-jump-cu"); } catch {}
+      const after = JSON.parse(rfs(dynPath, "utf8"));
+      if (Object.keys(after.profiles || {}).length === 0) unlinkSync(dynPath);
+    }
+  }
+});
+
+test("addJumpServer throws on invalid name", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-jump-badname-${Date.now()}`;
+  const { addJumpServer } = await import(moduleUrl);
+  assert.throws(() => addJumpServer("bad name!", { host: "1.2.3.4" }), /invalid jump server name/i);
+});
+
+test("removeJumpServer throws when not found", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=rm-jump-notfound-${Date.now()}`;
+  const { removeJumpServer } = await import(moduleUrl);
+  assert.throws(() => removeJumpServer("nonexistent-jump"), /not found/i);
+});
+
+test("resolveTarget uses jumpChain to build -J arg", async () => {
+  const configPath = writeTempConfig({
+    profiles: {
+      bastion1: { host: "10.0.0.1", user: "ops" },
+      bastion2: { host: "10.0.0.2", user: "relay" },
+      target: { host: "10.0.0.99", user: "deploy" }
+    },
+    defaults: { jumpChain: ["bastion1", "bastion2"] }
+  });
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=jump-chain-${Date.now()}`;
+  process.env.SSH_OPS_CONFIG = configPath;
+  const { resolveTarget } = await import(moduleUrl);
+  const info = resolveTarget({ target: "target" });
+  delete process.env.SSH_OPS_CONFIG;
+  const jIdx = info.sshArgs.indexOf("-J");
+  assert.ok(jIdx >= 0, "should have -J flag");
+  assert.ok(info.sshArgs[jIdx + 1].includes("10.0.0.1"), "should include bastion1");
+  assert.ok(info.sshArgs[jIdx + 1].includes("10.0.0.2"), "should include bastion2");
+  assert.ok(info.target.includes("10.0.0.99"), "target should be final destination");
+});
+
+test("resolveTarget uses commonUser when profile has no user", async () => {
+  const configPath = writeTempConfig({
+    profiles: { myserver: { host: "10.0.0.5" } },
+    defaults: { commonUser: "ubuntu" }
+  });
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=common-user-${Date.now()}`;
+  process.env.SSH_OPS_CONFIG = configPath;
+  const { resolveTarget } = await import(moduleUrl);
+  const info = resolveTarget({ target: "myserver" });
+  delete process.env.SSH_OPS_CONFIG;
+  assert.ok(info.target.includes("ubuntu@"), "target should use commonUser");
+});
+
+test("jumpChain skips for profiles that are in the chain themselves", async () => {
+  const configPath = writeTempConfig({
+    profiles: {
+      bastion1: { host: "10.0.0.1", user: "ops" },
+      target: { host: "10.0.0.99", user: "deploy" }
+    },
+    defaults: { jumpChain: ["bastion1"] }
+  });
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=jump-chain-skip-${Date.now()}`;
+  process.env.SSH_OPS_CONFIG = configPath;
+  const { resolveTarget } = await import(moduleUrl);
+  // connecting directly TO bastion1 should NOT add -J (it's in the chain)
+  const info = resolveTarget({ target: "bastion1" });
+  delete process.env.SSH_OPS_CONFIG;
+  assert.ok(!info.sshArgs.includes("-J"), "should not add -J when target is in the chain");
+});

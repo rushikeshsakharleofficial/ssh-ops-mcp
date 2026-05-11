@@ -1,6 +1,6 @@
 ---
 name: ssh-ops
-description: Use SSH Ops when inspecting, changing, or running commands on remote SSH servers. Covers inventory, health, disk, log search, network checks, multi-host execution, file read/write/patch (binary-safe), service control, package management, cron CRUD, and dynamic profile management (add/remove servers including password-based auth).
+description: Use SSH Ops when inspecting, changing, or running commands on remote SSH servers. Covers inventory, health, disk, log search, network checks, multi-host execution, file read/write/patch (binary-safe), service control, package management, cron CRUD, dynamic profile management with encrypted passwords, and jump/bastion server chain management (SSH -J multi-hop).
 ---
 
 # SSH Ops
@@ -23,6 +23,9 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_cron`: crontab list/add/remove for any user — CONFIRM for add/remove unless told automatically
 - `ssh_add_profile`: add or update an SSH profile dynamically; passwords stored AES-256-GCM encrypted; requires `sshpass` on local machine for password-based auth
 - `ssh_remove_profile`: remove a dynamically-added profile
+- `ssh_add_jump`: add a jump/bastion server and append to the SSH -J chain; optional `commonUser` sets default user for all target connections; supports password auth
+- `ssh_remove_jump`: remove a jump server and auto-remove from chain
+- `ssh_list_jumps`: show current jump chain, all jump servers, and commonUser
 
 CLI fallback from plugin root when MCP unavailable:
 

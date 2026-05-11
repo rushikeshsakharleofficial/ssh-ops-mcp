@@ -4,10 +4,19 @@ defaults:
   strictHostKeyChecking: accept-new
   timeoutMs: 120000
   maxOutputBytes: 2000000
-  # Optional global jump routing:
+
+  # ── Jump chain (SSH -J multi-hop) ──────────────────────────────────────────
+  # Ordered list of jump server profile names. All non-jump targets route
+  # through the full chain automatically. Add servers via ssh_add_jump MCP tool.
+  # jumpChain: [bastion1, bastion2]
+
+  # commonUser: deploy   # default SSH user for target connections with no user set
+
+  # ── Single-hop legacy jump (two-hop nested SSH, mutually exclusive with jumpChain) ──
   # jumpProfile: bastion
-  # jumpUser: relay
-  # targetUser: root
+  # jumpUser: relay       # run destination SSH as this user on the jump server
+  # targetUser: root      # user applied to destination host
+
 profiles:
   production:
     host: server.example.com
@@ -15,7 +24,15 @@ profiles:
     port: 22
     # access: sudo   # set to "sudo" to always run commands via sudo -n
     extraArgs: []
-  # bastion:
+
+  # Example jump/bastion server (add via ssh_add_jump or define manually):
+  # bastion1:
   #   host: bastion.example.com
   #   user: operator
+  #   port: 22
+
+  # Example second hop in the chain:
+  # bastion2:
+  #   host: internal-bastion.example.com
+  #   user: relay
   #   port: 22

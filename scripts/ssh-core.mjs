@@ -263,6 +263,83 @@ export function removeProfile(name) {
   return listProfiles();
 }
 
+export function listJumpServers() {
+  const config = loadConfig();
+  const chain = Array.isArray(config.defaults?.jumpChain) ? config.defaults.jumpChain : [];
+  const servers = {};
+  for (const [n, p] of Object.entries(config.profiles)) {
+    if (p._isJumpServer) {
+      servers[n] = {
+        host: p.host || null,
+        user: p.user || null,
+        port: p.port || 22,
+        inChain: chain.includes(n)
+      };
+    }
+  }
+  return {
+    jumpChain: chain,
+    commonUser: config.defaults?.commonUser || null,
+    jumpServers: servers
+  };
+}
+
+export function addJumpServer(name, server, { appendToChain = true, commonUser } = {}) {
+  if (!name || !/^[a-zA-Z0-9_-]+$/.test(name))
+    throw new Error(`Invalid jump server name "${name}". Use only letters, digits, hyphens, underscores.`);
+  if (!server.host) throw new Error("host is required.");
+  let dynamic = { profiles: {}, defaults: {} };
+  try {
+    if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
+  } catch {}
+  dynamic.profiles = dynamic.profiles || {};
+  dynamic.defaults = dynamic.defaults || {};
+  const entry = {
+    _isJumpServer: true,
+    host: server.host,
+    ...(server.user && { user: server.user }),
+    ...(server.port && { port: Number(server.port) }),
+    ...(server.identityFile && { identityFile: server.identityFile })
+  };
+  if (server.password) {
+    entry.encryptedPassword = encryptPassword(String(server.password));
+    entry.batchMode = false;
+  }
+  dynamic.profiles[name] = entry;
+  if (appendToChain) {
+    const chain = Array.isArray(dynamic.defaults.jumpChain) ? dynamic.defaults.jumpChain : [];
+    if (!chain.includes(name)) chain.push(name);
+    dynamic.defaults.jumpChain = chain;
+  }
+  if (commonUser) {
+    dynamic.defaults.commonUser = commonUser;
+  }
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  _configCache = null;
+  _configCacheTime = 0;
+  return listJumpServers();
+}
+
+export function removeJumpServer(name) {
+  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`Jump server "${name}" not found in dynamic config.`);
+  let dynamic = { profiles: {}, defaults: {} };
+  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {
+    throw new Error(`Jump server "${name}" not found in dynamic config.`);
+  }
+  if (!dynamic.profiles?.[name]?._isJumpServer) {
+    throw new Error(`Jump server "${name}" not found. Only MCP-added jump servers can be removed.`);
+  }
+  delete dynamic.profiles[name];
+  if (Array.isArray(dynamic.defaults?.jumpChain)) {
+    dynamic.defaults.jumpChain = dynamic.defaults.jumpChain.filter((n) => n !== name);
+    if (dynamic.defaults.jumpChain.length === 0) delete dynamic.defaults.jumpChain;
+  }
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  _configCache = null;
+  _configCacheTime = 0;
+  return listJumpServers();
+}
+
 export function resolveTarget(input = {}) {
   const config = loadConfig();
   const requestedTarget = input.profile || input.target || input.host || config.defaultTarget;
@@ -277,8 +354,21 @@ export function resolveTarget(input = {}) {
     ...profile,
     ...input
   };
-  const remoteJump = resolveRemoteJump(config, requestedTarget, merged);
-  const targetUser = remoteJump && merged.targetUser && !merged.user ? merged.targetUser : merged.user;
+
+  // jumpChain (-J multi-hop) takes priority over jumpProfile (nested SSH heredoc)
+  const rawChain = Array.isArray(merged.jumpChain) ? merged.jumpChain : null;
+  const jumpChain = rawChain && rawChain.length > 0 && !rawChain.includes(requestedTarget)
+    ? rawChain : null;
+
+  const remoteJump = jumpChain ? null : resolveRemoteJump(config, requestedTarget, merged);
+
+  // commonUser = fallback user for destination when profile has no explicit user
+  let targetUser;
+  if (remoteJump) {
+    targetUser = (merged.targetUser && !merged.user) ? merged.targetUser : merged.user;
+  } else {
+    targetUser = merged.user || merged.commonUser || null;
+  }
 
   let destinationTarget;
   if (merged.host) {
@@ -320,7 +410,18 @@ export function resolveTarget(input = {}) {
   if (connectionOptions.identityFile) {
     args.push("-i", String(connectionOptions.identityFile));
   }
-  if (connectionOptions.jumpHost) {
+
+  if (jumpChain) {
+    const jumpParts = jumpChain.map((jName) => {
+      const jp = config.profiles[jName];
+      if (!jp) throw new Error(`Jump server "${jName}" not found in config. Add it with ssh_add_jump.`);
+      if (!jp.host) throw new Error(`Jump server "${jName}" has no host defined.`);
+      const jUser = jp.user ? `${jp.user}@` : "";
+      const jPort = jp.port ? `:${jp.port}` : "";
+      return `${jUser}${jp.host}${jPort}`;
+    });
+    args.push("-J", jumpParts.join(","));
+  } else if (connectionOptions.jumpHost) {
     args.push("-J", String(merged.jumpHost));
   }
 
@@ -328,11 +429,14 @@ export function resolveTarget(input = {}) {
   const inputExtraArgs = Array.isArray(input.sshOptions) ? input.sshOptions : [];
   args.push(...profileExtraArgs.map(String), ...inputExtraArgs.map(String));
 
+  const chainLabel = jumpChain ? ` via [${jumpChain.join(" → ")}]` : "";
+  const targetLabel = remoteJump
+    ? `${usingProfile ? requestedTarget : destinationTarget} via ${merged.jumpProfile}`
+    : `${usingProfile ? requestedTarget : target}${chainLabel}`;
+
   return {
-    target,
-    targetLabel: remoteJump
-      ? `${usingProfile ? requestedTarget : destinationTarget} via ${merged.jumpProfile}`
-      : usingProfile ? requestedTarget : target,
+    target: jumpChain ? destinationTarget : target,
+    targetLabel,
     sshArgs: args,
     options: merged,
     remoteJump: remoteJump || null,
