@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import {
   diskReportScript,
+  fileReadScript,
+  fileWriteScript,
   formatRunResult,
   hardwareInventoryScript,
   healthReportScript,
   listProfiles,
-  runSshCommand
+  logSearchScript,
+  runSshCommand,
+  serviceScript
 } from "./ssh-core.mjs";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -159,6 +163,73 @@ const tools = [
       }
     }
   }
+  ,
+  {
+    name: "ssh_file_read",
+    title: "Read Remote File",
+    description: "Read a remote file over SSH.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        path: { type: "string", description: "Absolute remote path." },
+        maxBytes: { type: "number", description: "Byte cap. Default 51200." }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "ssh_file_write",
+    title: "Write Remote File",
+    description: "Overwrite a remote file. CONFIRM with user before calling unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        path: { type: "string", description: "Absolute remote path." },
+        content: { type: "string", description: "New file content." },
+        backup: { type: "boolean", description: "Backup before overwrite. Default true." },
+        sudo: { type: "boolean", description: "Write via sudo tee." }
+      },
+      required: ["path", "content"]
+    }
+  },
+  {
+    name: "ssh_service",
+    title: "SSH Service Control",
+    description: "Systemd service control. CONFIRM before start/stop/restart/enable/disable unless told automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        service: { type: "string", description: "Unit name, e.g. nginx." },
+        action: {
+          type: "string",
+          enum: ["status", "start", "stop", "restart", "enable", "disable"],
+          description: "Systemd action."
+        },
+        sudo: { type: "boolean", description: "Run via sudo -n. Default true." }
+      },
+      required: ["service", "action"]
+    }
+  },
+  {
+    name: "ssh_log_search",
+    title: "SSH Log Search",
+    description: "Search systemd journal or log file by pattern.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        unit: { type: "string", description: "journalctl -u filter." },
+        pattern: { type: "string", description: "grep -E pattern." },
+        lines: { type: "number", description: "Max lines. Default 100." },
+        since: { type: "string", description: "Time filter, e.g. '1h'." },
+        path: { type: "string", description: "Grep a file instead of journal." },
+        timeoutMs: { type: "number", description: "Timeout ms. Default 60000." }
+      }
+    }
+  }
 ];
 
 const handlers = {
@@ -217,6 +288,35 @@ async function callTool(name, args) {
   if (name === "ssh_health_report") {
     const command = healthReportScript();
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_file_read") {
+    const command = fileReadScript(args.path, args.maxBytes);
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_file_write") {
+    const command = fileWriteScript(args.path, args.content, {
+      backup: args.backup !== false,
+      sudo: Boolean(args.sudo)
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_service") {
+    const command = serviceScript(args.service, args.action, {
+      sudo: args.sudo !== false
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_log_search") {
+    const command = logSearchScript(args);
+    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
