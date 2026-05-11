@@ -54,10 +54,17 @@ else
   ok "claude $(claude --version 2>/dev/null | head -1 || true)"
 fi
 
+if ! has sshpass; then
+  warn "sshpass not found — password-based SSH profiles will not work"
+  info "Install: apt install sshpass  /  brew install sshpass  /  yum install sshpass"
+else
+  ok "sshpass $(sshpass -V 2>&1 | head -1 || true)"
+fi
+
 # ── Download files ─────────────────────────────────────────────────────────────
 
 step "Installing SSH Ops to $DIR"
-mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/skills/ssh-ops"
+mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/skills/ssh-ops/agents"
 
 fetch() { curl -fsSL "$BASE/$1" -o "$DIR/$1"; }
 fetch VERSION
@@ -68,6 +75,7 @@ fetch scripts/ssh-cli-options.mjs
 fetch ssh-ops.config.example.yaml
 fetch .codex-plugin/plugin.json
 fetch skills/ssh-ops/SKILL.md
+fetch skills/ssh-ops/agents/openai.yaml
 ok "Files downloaded"
 
 # ── Encryption key ─────────────────────────────────────────────────────────────
@@ -229,5 +237,5 @@ fi
 
 echo
 echo "${bold}${green}  ✓  SSH Ops installed successfully.${reset}"
-echo "${dim}  Restart Claude Code, Codex, Cursor, VS Code, or Gemini to activate.${reset}"
+echo "${dim}  Restart Claude Code, Codex, Cursor, VS Code, Gemini, or Antigravity to activate.${reset}"
 echo

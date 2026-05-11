@@ -39,6 +39,11 @@ if (-not (Has "claude")) {
     Ok "claude CLI installed"
 } else { Ok "claude CLI found" }
 
+if (-not (Has "sshpass")) {
+    Warn "sshpass not found — password-based SSH profiles will not work"
+    Info "Install via: choco install sshpass  or  scoop install sshpass"
+} else { Ok "sshpass found" }
+
 # ── Download files ─────────────────────────────────────────────────────────────
 
 Step "Installing SSH Ops to $Dir"
@@ -48,7 +53,9 @@ $files = @(
     "scripts/ssh-mcp-server.mjs", "scripts/ssh-core.mjs",
     "scripts/ssh-ops.mjs", "scripts/ssh-cli-options.mjs",
     "ssh-ops.config.example.yaml",
-    ".codex-plugin/plugin.json", "skills/ssh-ops/SKILL.md"
+    ".codex-plugin/plugin.json",
+    "skills/ssh-ops/SKILL.md",
+    "skills/ssh-ops/agents/openai.yaml"
 )
 foreach ($f in $files) {
     $dest = Join-Path $Dir ($f -replace "/","\\")
@@ -207,5 +214,5 @@ if (-not (Test-Path $cfg)) {
 
 Write-Host
 Write-Host "  ✓  SSH Ops installed successfully." -ForegroundColor Green
-Write-Host "  Restart Claude Code, Codex, Cursor, VS Code, or Gemini to activate." -ForegroundColor DarkGray
+Write-Host "  Restart Claude Code, Codex, Cursor, VS Code, Gemini, or Antigravity to activate." -ForegroundColor DarkGray
 Write-Host
