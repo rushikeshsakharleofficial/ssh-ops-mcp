@@ -4,7 +4,7 @@ SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Cl
 
 ## Install
 
-**Prerequisites:** `node` on your PATH (auto-installed if missing).
+**No prerequisites** — all dependencies are auto-installed.
 
 ### macOS / Linux
 
@@ -35,14 +35,29 @@ Each installer auto-detects which tools are installed and registers the MCP serv
 | Gemini CLI | user-scope via `gemini mcp add` |
 | Antigravity IDE | `~/.gemini/antigravity/mcp_config.json` |
 
-Also:
-- Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
-- Auto-installs `claude` CLI if missing
+### What the installer does
+
+**Dependencies** — auto-installs everything needed, nothing to pre-install:
+
+| Dependency | Auto-install method |
+|------------|---------------------|
+| `curl` | apt / dnf / yum / apk / brew / pacman / zypper |
+| `ssh` (OpenSSH client) | system package manager / Windows OpenSSH capability |
+| `node` 18+ | nvm (macOS/Linux) · winget / choco / scoop (Windows) |
+| `claude` CLI | `npm install -g @anthropic-ai/claude-code` |
+| `sshpass` | system package manager (needed for password-based profiles) |
+
+Package manager is auto-detected: `apt-get` → `dnf` → `yum` → `apk` → `brew` → `pacman` → `zypper`
+
+**After dependencies:**
 - Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
 - Generates a device-specific AES-256-GCM encryption key at `~/.ssh-ops/.encryption-key` (0600)
+- Installs SSH Ops as a Claude Code + Gemini skill plugin (skill loads automatically in every session)
+- Registers MCP server with every detected IDE/CLI tool
 - Re-running is idempotent — shows "Already registered" for each tool, only updates what changed
-- Your `ssh-ops.config.yaml` and encryption key are preserved on re-install
-- **Auto-updates on session start** — MCP server checks GitHub Releases on every `initialize` and silently pulls updates when a new version is available
+- Config and encryption key preserved on re-install
+- **Interactive setup wizard** runs on first install (or when config still has demo data): asks for server, jump server, switch user — tests the connection before saving
+- **Auto-updates on session start** — checks GitHub Releases silently on every `initialize`
 
 Restart your IDE or CLI session after running.
 
@@ -55,7 +70,12 @@ SSH_OPS_DIR=~/tools/ssh-ops curl -fsSL https://raw.githubusercontent.com/rushike
 $env:SSH_OPS_DIR="C:\tools\ssh-ops"; irm https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1 | iex
 ```
 
-**Update:** re-run the same install command to force an immediate update.
+**Update:** re-run the same install command.
+
+**Force setup wizard** (reconfigure server profiles):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh) --setup
+```
 
 ---
 
@@ -291,6 +311,7 @@ CLI options:
 
 ## How It Works
 
+- **Dependencies** — installer auto-detects the OS package manager (apt/dnf/yum/apk/brew/pacman/zypper) and installs curl, ssh, node, claude CLI, and sshpass without requiring any manual pre-work. On Windows, enables the built-in OpenSSH capability for ssh.
 - **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles and jump servers). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
 - **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
 - **jumpChain (-J multi-hop)** — when `jumpChain` is set in defaults, SSH Ops builds a `-J user@host1,user@host2,...` argument from the chain profiles. SSH handles each hop natively. Connecting to a server that's already in the chain skips the flag.
