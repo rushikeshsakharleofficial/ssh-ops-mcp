@@ -4,6 +4,8 @@ set -euo pipefail
 BASE="https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main"
 DIR="${SSH_OPS_DIR:-$HOME/.ssh-ops}"
 CODEX_PLUGINS="${CODEX_PLUGINS_DIR:-$HOME/.codex/plugins}"
+FORCE_SETUP=false
+for _arg in "$@"; do [ "$_arg" = "--setup" ] && FORCE_SETUP=true; done
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 bold=$(tput bold   2>/dev/null || true)
@@ -294,29 +296,63 @@ fi
 
 step "Config"
 CFG="$DIR/ssh-ops.config.yaml"
-if [ ! -f "$CFG" ]; then
-  cp "$DIR/ssh-ops.config.example.yaml" "$CFG"
-  ok "Created $CFG"
 
-  # Interactive setup wizard (runs when stdin is a terminal)
-  if [ -t 0 ]; then
+# Determine whether to run the setup wizard:
+# 1. --setup flag passed explicitly
+# 2. No config exists yet
+# 3. Config still contains demo placeholder data
+_run_setup=false
+if $FORCE_SETUP; then
+  _run_setup=true
+elif [ ! -f "$CFG" ]; then
+  cp "$DIR/ssh-ops.config.example.yaml" "$CFG"
+  _run_setup=true
+elif grep -q "server\.example\.com" "$CFG" 2>/dev/null; then
+  warn "Config still contains demo data — running setup"
+  _run_setup=true
+fi
+
+# ── Connection test helper ─────────────────────────────────────────────────────
+_test_conn() {
+  # Usage: _test_conn host user port [password] [identityFile] [jumpHost] [jumpUserLogin]
+  local _h="$1" _u="$2" _p="$3" _pw="${4:-}" _id="${5:-}" _jh="${6:-}" _ju="${7:-}"
+  local _opts="-o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+  [ "$_p" != "22" ] && _opts="$_opts -p $_p"
+  [ -n "$_id" ]     && _opts="$_opts -i $_id"
+  [ -n "$_jh" ]     && _opts="$_opts -J ${_ju:+${_ju}@}$_jh"
+  if [ -n "$_pw" ] && has sshpass; then
+    SSHPASS="$_pw" sshpass -e ssh $_opts "$_u@$_h" exit 2>/dev/null
+  else
+    ssh $_opts "$_u@$_h" exit 2>/dev/null
+  fi
+}
+
+# ── Setup wizard ───────────────────────────────────────────────────────────────
+if $_run_setup; then
+  if [ ! -t 0 ]; then
+    info "Non-interactive install — edit $CFG to add your server profiles"
+  else
     echo
-    info "Quick setup — configure your first server (press Enter to skip any field)"
+    info "Server setup (Enter to skip any field, Ctrl+C to cancel)"
     echo
+
     printf "  Server host or IP: "; read -r _host
-    if [ -n "$_host" ]; then
+    if [ -z "$_host" ]; then
+      info "Skipped — edit $CFG to add your server profiles"
+    else
       printf "  SSH user [root]: "; read -r _user; _user="${_user:-root}"
       printf "  SSH port [22]: "; read -r _port; _port="${_port:-22}"
       printf "  Profile name [server1]: "; read -r _pname; _pname="${_pname:-server1}"
-      printf "  Use as default target? [Y/n]: "; read -r _default
+      printf "  SSH identity file (leave blank for default key): "; read -r _idfile
+      printf "  SSH password (leave blank for key auth): "; read -rs _password; echo
 
-      # Ask for jump server
-      printf "  Route through a jump/bastion server? [y/N]: "; read -r _usejump
-      _jump_block=""
+      # Jump server
+      printf "  Route through jump/bastion server? [y/N]: "; read -r _usejump
+      _jump_block="" _jump_ref="" _jhost="" _jpname="" _juser="" _jumpuser="" _jtest_host=""
       if echo "$_usejump" | grep -qi "^y"; then
-        printf "  Jump server host or IP: "; read -r _jhost
-        printf "  Jump server SSH user [$USER]: "; read -r _juser; _juser="${_juser:-$USER}"
-        printf "  Switch to user on jump server (leave blank if not needed): "; read -r _jumpuser
+        printf "  Jump host or IP: "; read -r _jhost
+        printf "  Jump SSH user [$USER]: "; read -r _juser; _juser="${_juser:-$USER}"
+        printf "  Switch to user on jump server (blank = no switch): "; read -r _jumpuser
         printf "  Jump profile name [bastion]: "; read -r _jpname; _jpname="${_jpname:-bastion}"
         _jump_block="
   $_jpname:
@@ -326,12 +362,70 @@ if [ ! -f "$CFG" ]; then
     jumpProfile: $_jpname"
         [ -n "$_jumpuser" ] && _jump_ref="${_jump_ref}
     jumpUser: $_jumpuser"
+        _jtest_host="$_jhost"
       fi
 
-      # Write config
-      _default_line=""
-      echo "$_default" | grep -qi "^n" || _default_line="defaultTarget: $_pname"
-      cat > "$CFG" << YMLEOF
+      # ── Test connection ──────────────────────────────────────────────────────
+      echo
+      info "Testing connection..."
+      _conn_ok=false
+      _retry=true
+      while $_retry; do
+        _retry=false
+        if [ -n "$_jtest_host" ]; then
+          printf "  Connecting to jump server %s... " "$_jhost"
+          if _test_conn "$_jhost" "$_juser" "22" "" "$_idfile"; then
+            echo "${green}OK${reset}"
+            printf "  Connecting to target %s via jump... " "$_host"
+            if _test_conn "$_host" "$_user" "$_port" "$_password" "$_idfile" "$_jhost" "$_juser"; then
+              echo "${green}OK${reset}"
+              _conn_ok=true
+            else
+              echo "${red}FAILED${reset}"
+            fi
+          else
+            echo "${red}FAILED${reset}"
+          fi
+        else
+          printf "  Connecting to %s... " "$_host"
+          if _test_conn "$_host" "$_user" "$_port" "$_password" "$_idfile"; then
+            echo "${green}OK${reset}"
+            _conn_ok=true
+          else
+            echo "${red}FAILED${reset}"
+          fi
+        fi
+
+        if ! $_conn_ok; then
+          echo
+          warn "Connection failed. Options:"
+          echo "  1) Retry (check firewall / VPN / key permissions)"
+          echo "  2) Try a different identity file"
+          echo "  3) Save config anyway (fix later)"
+          echo "  4) Abort setup"
+          printf "  Choice [1-4]: "; read -r _choice
+          case "$_choice" in
+            2)
+              printf "  Identity file path: "; read -r _idfile
+              _retry=true ;;
+            3)
+              _conn_ok=true ;;  # save regardless
+            4)
+              info "Setup aborted — edit $CFG manually"
+              _host="" ;;
+            *)
+              _retry=true ;;
+          esac
+        fi
+      done
+
+      # ── Write config (only if we have a host) ───────────────────────────────
+      if [ -n "$_host" ]; then
+        _default_line=""
+        echo "${_default:-}" | grep -qi "^n" || _default_line="defaultTarget: $_pname"
+        _id_line=""; [ -n "$_idfile" ] && _id_line="
+    identityFile: $_idfile"
+        cat > "$CFG" << YMLEOF
 ${_default_line}
 defaults:
   connectTimeoutSec: 12
@@ -342,15 +436,17 @@ profiles:
   $_pname:
     host: $_host
     user: $_user
-    port: $_port${_jump_ref:-}
+    port: $_port${_id_line}${_jump_ref:-}
 ${_jump_block:-}
 YMLEOF
-      ok "Config written: $_pname → $_user@$_host${_jhost:+ via $_jpname}"
-    else
-      info "Skipped — edit $CFG to add your servers"
+        if $_conn_ok && [ "$_choice" != "3" ] 2>/dev/null; then
+          ok "Config saved and connection verified: $_pname → $_user@$_host${_jhost:+ via $_jpname}"
+        else
+          ok "Config saved (connection not verified): $_pname → $_user@$_host"
+          info "Test manually: ssh $_user@$_host"
+        fi
+      fi
     fi
-  else
-    info "Edit $CFG to add your server profiles"
   fi
 else
   info "Preserved existing $CFG"
