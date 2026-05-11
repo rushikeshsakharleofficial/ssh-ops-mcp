@@ -97,16 +97,11 @@ add_mcp() {
 # ── Claude Code ────────────────────────────────────────────────────────────────
 
 step "Claude Code"
+claude mcp remove ssh-ops 2>/dev/null || true
 if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
   ok "Registered"
 else
-  info "Already registered — re-registering"
-  claude mcp remove ssh-ops 2>/dev/null || true
-  if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
-    ok "Re-registered"
-  else
-    err "Registration failed — run manually: claude mcp add ssh-ops node \"$DIR/scripts/ssh-mcp-server.mjs\""
-  fi
+  err "Registration failed — run manually: claude mcp add ssh-ops node \"$DIR/scripts/ssh-mcp-server.mjs\""
 fi
 
 # ── Codex ──────────────────────────────────────────────────────────────────────

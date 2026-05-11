@@ -88,16 +88,10 @@ fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
 # ── Claude Code ────────────────────────────────────────────────────────────────
 
 Step "Claude Code"
-$r = & claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Ok "Registered"
-} else {
-    Info "Already registered — re-registering"
-    & claude mcp remove ssh-ops 2>&1 | Out-Null
-    & claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Ok "Re-registered" }
-    else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
-}
+& claude mcp remove ssh-ops 2>&1 | Out-Null
+& claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) { Ok "Registered" }
+else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
 
