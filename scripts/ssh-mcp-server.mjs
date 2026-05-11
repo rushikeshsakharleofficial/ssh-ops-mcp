@@ -3,6 +3,7 @@ import {
   addJumpServer,
   addProfile,
   cronScript,
+  ipAssignScript,
   listLocalSshKeys,
   diskReportScript,
   filePatchScript,
@@ -476,6 +477,36 @@ const tools = [
       type: "object",
       properties: {}
     }
+  },
+  {
+    name: "ssh_ip_assign",
+    title: "Assign IP Addresses",
+    description: "Assign one or more IP addresses to a network interface on a remote host. Applies immediately via `ip addr add` AND persists across reboots. Auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) or override with `method`. Always runs as sudo. CONFIRM with user before calling.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        iface: { type: "string", description: "Network interface name, e.g. eth0, ens3, enp0s3." },
+        ips: {
+          type: "array",
+          items: { type: "string" },
+          description: "IP addresses in CIDR notation, e.g. [\"192.168.1.100/24\", \"10.0.0.5/24\"]."
+        },
+        gateway: { type: "string", description: "Optional default gateway IP." },
+        dns: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional DNS server IPs."
+        },
+        method: {
+          type: "string",
+          enum: ["auto", "netplan", "networkmanager", "network-scripts", "networkd", "rc.local"],
+          description: "Persistence method. Default auto-detects from the running system."
+        },
+        timeoutMs: { type: "number", description: "Timeout ms. Default 60000." }
+      },
+      required: ["iface", "ips"]
+    }
   }
 ];
 
@@ -683,6 +714,24 @@ async function callTool(name, args) {
       ? `Found ${keys.length} SSH private key(s):\n${keys.map((k) => `  ${k}`).join("\n")}`
       : "No SSH private keys found in ~/.ssh/ or home directory.";
     return textResult(out);
+  }
+
+  if (name === "ssh_ip_assign") {
+    const command = ipAssignScript({
+      iface: args.iface,
+      ips: args.ips,
+      gateway: args.gateway,
+      dns: args.dns,
+      method: args.method || "auto"
+    });
+    const result = await runSshCommand({
+      ...args,
+      command,
+      mode: "bash",
+      sudo: true,
+      timeoutMs: args.timeoutMs || 60_000
+    });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   return textResult(`Unknown tool: ${name}`, true);

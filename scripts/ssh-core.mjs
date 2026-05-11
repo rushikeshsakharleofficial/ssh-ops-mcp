@@ -1150,6 +1150,176 @@ export function cronScript({ action, user, schedule, command: cronCommand } = {}
   return parts.join("\n") + "\n";
 }
 
+export function ipAssignScript({ iface, ips, gateway, dns, method = "auto" } = {}) {
+  if (!iface || typeof iface !== "string") throw new Error("iface (interface name) is required.");
+  if (!Array.isArray(ips) || ips.length === 0) throw new Error("ips array is required and must not be empty.");
+  for (const ip of ips) {
+    if (!/^[\d.a-fA-F:]+\/\d{1,3}$/.test(ip)) {
+      throw new Error(`Invalid CIDR notation: "${ip}". Use format like 192.168.1.100/24 or 2001:db8::1/64`);
+    }
+  }
+  const validMethods = ["auto", "netplan", "networkmanager", "network-scripts", "networkd", "rc.local"];
+  if (!validMethods.includes(method)) throw new Error(`method must be one of: ${validMethods.join(", ")}`);
+
+  const ifaceQ = shellQuote(iface);
+  const ipsStr = ips.map(shellQuote).join(" ");
+  const gatewayQ = gateway ? shellQuote(gateway) : "";
+  const dnsStr = Array.isArray(dns) && dns.length ? dns.map(shellQuote).join(" ") : "";
+  const methodQ = shellQuote(method);
+
+  return `set +e
+export LC_ALL=C
+IFACE=${ifaceQ}
+IPS=(${ipsStr})
+GATEWAY=${gatewayQ}
+DNS_SERVERS=(${dnsStr})
+PREFERRED_METHOD=${methodQ}
+
+section() { printf '\\n===== %s =====\\n' "$1"; }
+
+# Verify interface exists
+if ! ip link show "$IFACE" >/dev/null 2>&1; then
+  echo "ERROR: Interface $IFACE not found."
+  echo "Available interfaces:"
+  ip -o link show | awk -F': ' '{print "  " $2}'
+  exit 1
+fi
+
+# Auto-detect network manager
+detect_method() {
+  [ "$PREFERRED_METHOD" != "auto" ] && { echo "$PREFERRED_METHOD"; return; }
+  if command -v netplan >/dev/null 2>&1 && [ -d /etc/netplan ]; then
+    echo netplan
+  elif systemctl is-active --quiet NetworkManager 2>/dev/null; then
+    echo networkmanager
+  elif [ -d /etc/sysconfig/network-scripts ]; then
+    echo network-scripts
+  elif systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+    echo networkd
+  else
+    echo rc.local
+  fi
+}
+
+METHOD=$(detect_method)
+echo "Interface  : $IFACE"
+echo "Method     : $METHOD"
+echo "IPs        : \${IPS[*]}"
+[ -n "$GATEWAY" ] && echo "Gateway    : $GATEWAY"
+[ \${#DNS_SERVERS[@]} -gt 0 ] && echo "DNS        : \${DNS_SERVERS[*]}"
+
+section "Apply immediately (ip addr add)"
+for IP in "\${IPS[@]}"; do
+  if ip addr show dev "$IFACE" 2>/dev/null | grep -qF " $IP "; then
+    echo "  $IP -- already assigned, skipped"
+  else
+    if ip addr add "$IP" dev "$IFACE" 2>&1; then
+      echo "  $IP -- added"
+    else
+      echo "  $IP -- add failed (may need reboot or kernel support)"
+    fi
+  fi
+done
+
+section "Persist via $METHOD"
+
+case "$METHOD" in
+
+  netplan)
+    NP_FILE="/etc/netplan/99-ssh-ops-$IFACE.yaml"
+    {
+      printf 'network:\\n  version: 2\\n  ethernets:\\n    %s:\\n      addresses:\\n' "$IFACE"
+      for IP in "\${IPS[@]}"; do printf '        - %s\\n' "$IP"; done
+      if [ -n "$GATEWAY" ]; then
+        printf '      routes:\\n        - to: default\\n          via: %s\\n' "$GATEWAY"
+      fi
+      if [ \${#DNS_SERVERS[@]} -gt 0 ]; then
+        printf '      nameservers:\\n        addresses: [%s]\\n' "$(IFS=,; printf '%s' "\${DNS_SERVERS[*]}")"
+      fi
+    } > "$NP_FILE"
+    echo "  Written: $NP_FILE"
+    chmod 600 "$NP_FILE"
+    if netplan apply 2>&1; then echo "  netplan apply: OK"
+    else echo "  netplan apply: FAILED -- check $NP_FILE"; fi
+    ;;
+
+  networkmanager)
+    CONN=$(nmcli -t -f NAME,DEVICE conn show --active 2>/dev/null | grep ":$IFACE$" | head -1 | cut -d: -f1)
+    [ -z "$CONN" ] && CONN=$(nmcli -t -f NAME,DEVICE conn show 2>/dev/null | grep ":$IFACE$" | head -1 | cut -d: -f1)
+    if [ -z "$CONN" ]; then
+      CONN="ssh-ops-$IFACE"
+      echo "  No existing connection -- creating: $CONN"
+      nmcli connection add type ethernet ifname "$IFACE" con-name "$CONN" ipv4.method manual
+    fi
+    echo "  Connection: $CONN"
+    for IP in "\${IPS[@]}"; do
+      nmcli connection modify "$CONN" +ipv4.addresses "$IP" && echo "  Added $IP"
+    done
+    [ -n "$GATEWAY" ] && nmcli connection modify "$CONN" ipv4.gateway "$GATEWAY" && echo "  Gateway: $GATEWAY"
+    if [ \${#DNS_SERVERS[@]} -gt 0 ]; then
+      nmcli connection modify "$CONN" ipv4.dns "$(IFS=,; printf '%s' "\${DNS_SERVERS[*]}")" && echo "  DNS: \${DNS_SERVERS[*]}"
+    fi
+    nmcli connection up "$CONN" && echo "  Connection up: OK" || echo "  Connection up: FAILED"
+    ;;
+
+  network-scripts)
+    N=1
+    for IP in "\${IPS[@]}"; do
+      while [ -f "/etc/sysconfig/network-scripts/ifcfg-$IFACE:$N" ]; do N=$((N+1)); done
+      ALIAS="$IFACE:$N"
+      ALIAS_FILE="/etc/sysconfig/network-scripts/ifcfg-$ALIAS"
+      IPADDR=\${IP%%/*}
+      PREFIX=\${IP##*/}
+      printf 'DEVICE="%s"\\nBOOTPROTO=none\\nONBOOT=yes\\nIPADDR=%s\\nPREFIX=%s\\n' \
+        "$ALIAS" "$IPADDR" "$PREFIX" > "$ALIAS_FILE"
+      echo "  Written: $ALIAS_FILE"
+      ifup "$ALIAS" 2>/dev/null && echo "  ifup $ALIAS: OK" || echo "  ifup $ALIAS: FAILED (will apply on reboot)"
+      N=$((N+1))
+    done
+    ;;
+
+  networkd)
+    ND_FILE="/etc/systemd/network/99-ssh-ops-$IFACE.network"
+    {
+      printf '[Match]\\nName=%s\\n\\n[Network]\\n' "$IFACE"
+      for IP in "\${IPS[@]}"; do printf 'Address=%s\\n' "$IP"; done
+      [ -n "$GATEWAY" ] && printf 'Gateway=%s\\n' "$GATEWAY"
+      [ \${#DNS_SERVERS[@]} -gt 0 ] && printf 'DNS=%s\\n' "\${DNS_SERVERS[*]}"
+    } > "$ND_FILE"
+    echo "  Written: $ND_FILE"
+    systemctl restart systemd-networkd && echo "  systemd-networkd restart: OK" || echo "  systemd-networkd restart: FAILED"
+    networkctl status "$IFACE" 2>/dev/null | head -8 || true
+    ;;
+
+  rc.local)
+    for RCFILE in /etc/rc.local /etc/rc.d/rc.local; do
+      [ -e "$RCFILE" ] || continue
+      for IP in "\${IPS[@]}"; do
+        LINE="ip addr add $IP dev $IFACE"
+        if grep -qF "$LINE" "$RCFILE" 2>/dev/null; then
+          echo "  $IP already in $RCFILE -- skipped"
+        else
+          if grep -q "^exit 0" "$RCFILE"; then
+            sed -i "/^exit 0/i $LINE" "$RCFILE"
+          else
+            printf '%s\\n' "$LINE" >> "$RCFILE"
+          fi
+          echo "  Added to $RCFILE: $LINE"
+        fi
+      done
+      chmod +x "$RCFILE"
+      echo "  chmod +x $RCFILE: OK"
+      break
+    done
+    ;;
+
+esac
+
+section "Current addresses on $IFACE"
+ip addr show dev "$IFACE"
+`;
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {

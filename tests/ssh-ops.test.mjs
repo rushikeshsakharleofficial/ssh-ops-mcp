@@ -711,3 +711,50 @@ test("jumpChain skips for profiles that are in the chain themselves", async () =
   delete process.env.SSH_OPS_CONFIG;
   assert.ok(!info.sshArgs.includes("-J"), "should not add -J when target is in the chain");
 });
+
+test("ipAssignScript throws when iface missing", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-no-iface-${Date.now()}`;
+  const { ipAssignScript } = await import(moduleUrl);
+  assert.throws(() => ipAssignScript({ ips: ["10.0.0.1/24"] }), /iface.*required/i);
+});
+
+test("ipAssignScript throws when ips empty", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-no-ips-${Date.now()}`;
+  const { ipAssignScript } = await import(moduleUrl);
+  assert.throws(() => ipAssignScript({ iface: "eth0", ips: [] }), /ips array is required/i);
+});
+
+test("ipAssignScript throws on invalid CIDR", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-bad-cidr-${Date.now()}`;
+  const { ipAssignScript } = await import(moduleUrl);
+  assert.throws(() => ipAssignScript({ iface: "eth0", ips: ["192.168.1.100"] }), /Invalid CIDR/i);
+});
+
+test("ipAssignScript includes interface and IPs in script", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-script-${Date.now()}`;
+  const { ipAssignScript } = await import(moduleUrl);
+  const script = ipAssignScript({ iface: "eth0", ips: ["192.168.1.100/24", "10.0.0.5/16"] });
+  assert.ok(script.includes("eth0"), "should include interface");
+  assert.ok(script.includes("192.168.1.100/24"), "should include first IP");
+  assert.ok(script.includes("10.0.0.5/16"), "should include second IP");
+  assert.ok(script.includes("detect_method"), "should include method detection");
+  assert.ok(script.includes("netplan"), "should handle netplan");
+  assert.ok(script.includes("networkmanager"), "should handle NetworkManager");
+  assert.ok(script.includes("network-scripts"), "should handle network-scripts");
+  assert.ok(script.includes("networkd"), "should handle systemd-networkd");
+  assert.ok(script.includes("rc.local"), "should handle rc.local");
+});
+
+test("ipAssignScript includes gateway and DNS when provided", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-gw-dns-${Date.now()}`;
+  const { ipAssignScript } = await import(moduleUrl);
+  const script = ipAssignScript({
+    iface: "ens3",
+    ips: ["10.0.0.10/24"],
+    gateway: "10.0.0.1",
+    dns: ["8.8.8.8", "1.1.1.1"]
+  });
+  assert.ok(script.includes("10.0.0.1"), "should include gateway");
+  assert.ok(script.includes("8.8.8.8"), "should include first DNS");
+  assert.ok(script.includes("1.1.1.1"), "should include second DNS");
+});
