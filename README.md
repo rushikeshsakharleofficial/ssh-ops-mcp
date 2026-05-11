@@ -1,6 +1,6 @@
 # SSH Ops
 
-SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords stored encrypted (AES-256-GCM, device-specific key).
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords and credentials stored encrypted (AES-256-GCM, device-specific key).
 
 ## Install
 
@@ -32,7 +32,7 @@ Each installer auto-detects which tools are installed and registers the MCP serv
 | Codex | symlink in `~/.codex/plugins/` |
 | Cursor | `~/.cursor/mcp.json` |
 | VS Code Copilot | `settings.json` → `mcp.servers` |
-| Gemini CLI | `~/.gemini/settings.json` |
+| Gemini CLI | user-scope via `gemini mcp add` |
 | Antigravity IDE | `~/.gemini/antigravity/mcp_config.json` |
 
 Also:
@@ -40,7 +40,8 @@ Also:
 - Auto-installs `claude` CLI if missing
 - Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
 - Generates a device-specific AES-256-GCM encryption key at `~/.ssh-ops/.encryption-key` (0600)
-- Re-running updates all files; your `ssh-ops.config.yaml` and encryption key are preserved
+- Re-running is idempotent — shows "Already registered" for each tool, only updates what changed
+- Your `ssh-ops.config.yaml` and encryption key are preserved on re-install
 - **Auto-updates on session start** — MCP server checks GitHub Releases on every `initialize` and silently pulls updates when a new version is available
 
 Restart your IDE or CLI session after running.
@@ -78,10 +79,8 @@ profiles:
     host: server.example.com
     user: deploy
     port: 22
-  bastion:
-    host: bastion.example.com
-    user: operator
     access: sudo          # prepend sudo to all commands for this profile
+    extraArgs: []
 ```
 
 `ssh-ops.config.yaml` is gitignored — per-machine targets and key paths stay local. JSON config files also work.
@@ -96,24 +95,59 @@ ssh_add_profile(name="prod-key", host="prod.example.com", user="deploy", identit
 ssh_remove_profile(name="staging")
 ```
 
-Passwords are encrypted with AES-256-GCM using the device key at `~/.ssh-ops/.encryption-key`. Requires `sshpass` on the local machine for password-based auth. Dynamic profiles are stored in `ssh-ops.dynamic.json` (gitignored).
+- Passwords encrypted with AES-256-GCM using the device key at `~/.ssh-ops/.encryption-key`
+- Requires `sshpass` on the local machine for password-based auth
+- Dynamic profiles stored in `ssh-ops.dynamic.json` (gitignored)
+- Each entry tagged with `_type`, `_addedAt`, `_updatedAt` for JSON filtering
 
 ### Jump Server Routing
 
-To route all non-jump targets through a bastion:
+**Multi-hop via SSH `-J` (recommended):**
+
+```yaml
+defaults:
+  jumpChain: [bastion1, bastion2]   # ordered chain — all targets route through this
+  commonUser: deploy                 # default SSH user when no per-profile user is set
+profiles:
+  bastion1:
+    host: bastion.example.com
+    user: operator
+    port: 22
+  bastion2:
+    host: internal-bastion.example.com
+    user: relay
+```
+
+- SSH Ops builds `-J ops@bastion.example.com,relay@internal-bastion.example.com` automatically
+- Connecting directly to a server in the chain skips the `-J` flag
+- Manage jump servers dynamically via `ssh_add_jump` / `ssh_remove_jump`
+
+**Single-hop nested SSH (legacy, keys on jump server):**
 
 ```yaml
 defaults:
   jumpProfile: bastion
-  jumpUser: relay
-  targetUser: root
+  jumpUser: relay       # switch to this user on jump server before connecting onward
+  targetUser: root      # user for the final destination
 profiles:
   bastion:
     host: bastion.example.com
     user: operator
 ```
 
-Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `root@<destination>`. The bastion profile itself connects directly.
+This connects to `bastion` as `operator`, then runs `sudo -n -u relay ssh root@destination` from there — useful when the keys for internal servers live on the jump host.
+
+### Auth failure handling
+
+When credentials fail, the profile is automatically flagged `_authFailed: true` in the dynamic config. The next command returns:
+
+```
+⚠ AUTH FAILURE — credentials stored for this profile no longer work.
+  Update via ssh_add_profile / ssh_add_jump with new password or identityFile.
+  To see available local SSH keys: ssh_list_keys
+```
+
+Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reused silently on every call — you're only asked again when they fail.
 
 ---
 
@@ -142,7 +176,7 @@ Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `roo
 | Tool | Description |
 |------|-------------|
 | `ssh_file_read` | Read a remote file (`encoding: "base64"` for binary) |
-| `ssh_file_write` | Overwrite a remote file; auto-backup before write (`encoding: "base64"` for binary) |
+| `ssh_file_write` | Overwrite a remote file; auto-backup before write |
 | `ssh_file_patch` | Edit a remote file — replace a line range or regex find-and-replace |
 
 ### System Management *(confirm before write actions)*
@@ -152,13 +186,23 @@ Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `roo
 | `ssh_service` | Systemd service control — status, start, stop, restart, enable, disable |
 | `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
 | `ssh_cron` | Crontab CRUD for any user — list, add, remove |
+| `ssh_ip_assign` | Assign one or more IP addresses (CIDR) to a network interface, applied immediately and persisted permanently |
 
 ### Profile Management
 
 | Tool | Description |
 |------|-------------|
-| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords stored AES-256-GCM encrypted |
+| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords AES-256-GCM encrypted |
 | `ssh_remove_profile` | Remove a dynamically-added profile |
+| `ssh_list_keys` | List SSH private key files in `~/.ssh/` and home directory |
+
+### Jump Server Management
+
+| Tool | Description |
+|------|-------------|
+| `ssh_add_jump` | Add a jump/bastion server; appends to SSH `-J` chain; optional `commonUser` |
+| `ssh_remove_jump` | Remove a jump server and prune it from the chain |
+| `ssh_list_jumps` | Show current jump chain, all jump servers, and `commonUser` |
 
 The MCP server communicates over newline-delimited JSON-RPC on stdio.
 
@@ -196,10 +240,14 @@ CLI options:
 
 ## How It Works
 
-- **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
+- **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles and jump servers). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
 - **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
-- **Two-hop routing** — when `jumpProfile` is set in defaults, SSH Ops connects to the jump host first, then runs a nested `ssh` from there to the final destination using a heredoc. Transparent to the caller.
+- **jumpChain (-J multi-hop)** — when `jumpChain` is set in defaults, SSH Ops builds a `-J user@host1,user@host2,...` argument from the chain profiles. SSH handles each hop natively. Connecting to a server that's already in the chain skips the flag.
+- **jumpProfile (nested SSH)** — legacy two-hop mode: connects to jump host, then runs `sudo -n -u <jumpUser> ssh <destination>` from there via a heredoc. Useful when keys for internal targets live on the jump server.
+- **commonUser** — fallback SSH username applied to all target connections that have no `user` set in their profile. Stored in dynamic config defaults.
 - **Password auth** — profiles with a password use `sshpass -e` with the decrypted password injected via the `SSHPASS` env var. Password never appears in process args. Requires `sshpass` installed locally.
 - **Encryption** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device key generated at install time (`~/.ssh-ops/.encryption-key`, 0600). Passwords from one machine cannot be decrypted on another.
-- **Safety** — all sudo uses `sudo -n` (fails instead of prompting if a password would be required). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
+- **Auth failure tracking** — SSH exit 255 with auth-failure stderr patterns marks the profile `_authFailed: true` in the dynamic config. Updating credentials clears the flag automatically.
+- **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately then auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) to persist the assignment across reboots.
+- **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
