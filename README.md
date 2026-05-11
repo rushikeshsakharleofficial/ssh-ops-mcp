@@ -25,8 +25,10 @@ Installs to `%LOCALAPPDATA%\ssh-ops-mcp`.
 ---
 
 Each installer:
-- Clones the repo (or `git pull` if already installed)
-- Runs `claude mcp add ssh-ops node <path>/scripts/ssh-mcp-server.mjs` if `claude` CLI is found
+- Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
+- Auto-installs the `claude` CLI if missing (`npm install -g @anthropic-ai/claude-code`)
+- Downloads only the required script files to `~/.ssh-ops/` — no git clone, no repo bloat
+- Registers the MCP server with Claude Code
 - Symlinks/junctions into the Codex plugins directory if Codex is detected
 - Creates a starter `ssh-ops.config.yaml`
 

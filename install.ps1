@@ -1,69 +1,109 @@
 $ErrorActionPreference = "Stop"
 
-$Repo           = "https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git"
-$InstallDir     = if ($env:SSH_OPS_DIR)       { $env:SSH_OPS_DIR }       else { "$env:LOCALAPPDATA\ssh-ops-mcp" }
-$CodexPluginsDir = if ($env:CODEX_PLUGINS_DIR) { $env:CODEX_PLUGINS_DIR } else { "$env:USERPROFILE\.codex\plugins" }
+$Base         = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main"
+$Dir          = if ($env:SSH_OPS_DIR)       { $env:SSH_OPS_DIR }       else { "$env:USERPROFILE\.ssh-ops" }
+$CodexPlugins = if ($env:CODEX_PLUGINS_DIR) { $env:CODEX_PLUGINS_DIR } else { "$env:USERPROFILE\.codex\plugins" }
 
-function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
-function Ok($msg)   { Write-Host "  v  $msg" -ForegroundColor Green }
-function Warn($msg) { Write-Host "  !  $msg" -ForegroundColor Yellow }
+function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "  v  $m" -ForegroundColor Green }
+function Warn($m) { Write-Host "  !  $m" -ForegroundColor Yellow }
+function Has($c)  { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
-# Prerequisites
-foreach ($bin in @("git", "node")) {
-    if (-not (Get-Command $bin -ErrorAction SilentlyContinue)) {
-        Write-Error "$bin not found. Install it and retry."
+# ── Dependencies ──────────────────────────────────────────────────────────────
+
+Step "Checking dependencies"
+
+# Node.js
+if (-not (Has "node")) {
+    Warn "node not found — installing"
+    if (Has "winget") {
+        winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
+    } elseif (Has "choco") {
+        choco install nodejs-lts -y --no-progress
+    } elseif (Has "scoop") {
+        scoop install nodejs-lts
+    } else {
+        Write-Error "Cannot auto-install Node.js. Install it from https://nodejs.org and retry."
         exit 1
     }
-}
-
-# Clone or update
-Step "Installing SSH Ops to $InstallDir"
-if (Test-Path "$InstallDir\.git") {
-    git -C $InstallDir pull --ff-only --quiet
-    Ok "Updated existing installation"
-} else {
-    git clone --quiet $Repo $InstallDir
-    Ok "Cloned repository"
-}
-
-# Claude Code
-Step "Setting up Claude Code"
-if (Get-Command claude -ErrorAction SilentlyContinue) {
-    $result = claude mcp add ssh-ops node "$InstallDir\scripts\ssh-mcp-server.mjs" 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Ok "MCP server registered with Claude Code"
-    } else {
-        Warn "Already registered or failed. Register manually:"
-        Write-Host "     claude mcp add ssh-ops node `"$InstallDir\scripts\ssh-mcp-server.mjs`""
+    # Refresh PATH so node is available immediately
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("PATH","User")
+    if (-not (Has "node")) {
+        Write-Error "Node.js installed but not on PATH. Restart your terminal and re-run."
+        exit 1
     }
+    Ok "Node.js $(node --version) installed"
 } else {
-    Warn "claude CLI not found — skipping. Register manually after installing Claude Code:"
-    Write-Host "     claude mcp add ssh-ops node `"$InstallDir\scripts\ssh-mcp-server.mjs`""
+    Ok "node $(node --version)"
 }
 
-# Codex
+# Claude Code CLI
+if (-not (Has "claude")) {
+    Warn "claude CLI not found — installing via npm"
+    npm install -g @anthropic-ai/claude-code --silent
+    Ok "claude CLI installed"
+} else {
+    Ok "claude CLI found"
+}
+
+# ── Download files ─────────────────────────────────────────────────────────────
+
+Step "Installing SSH Ops to $Dir"
+
+$files = @(
+    "scripts/ssh-mcp-server.mjs",
+    "scripts/ssh-core.mjs",
+    "scripts/ssh-ops.mjs",
+    "scripts/ssh-cli-options.mjs",
+    "ssh-ops.config.example.yaml",
+    ".codex-plugin/plugin.json",
+    "skills/ssh-ops/SKILL.md"
+)
+
+foreach ($f in $files) {
+    $dest = Join-Path $Dir ($f -replace "/","\\")
+    New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+    Invoke-WebRequest -Uri "$Base/$f" -OutFile $dest -UseBasicParsing
+}
+
+Ok "Files downloaded"
+
+# ── Claude Code ────────────────────────────────────────────────────────────────
+
+Step "Registering MCP server with Claude Code"
+$r = & claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Ok "Registered ssh-ops"
+} else {
+    Warn "Already registered. Re-register manually:"
+    Write-Host "     claude mcp remove ssh-ops; claude mcp add ssh-ops node `"$Dir\scripts\ssh-mcp-server.mjs`""
+}
+
+# ── Codex ──────────────────────────────────────────────────────────────────────
+
 Step "Setting up Codex"
-if ((Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path $CodexPluginsDir)) {
-    New-Item -ItemType Directory -Force -Path $CodexPluginsDir | Out-Null
-    $symlink = "$CodexPluginsDir\ssh-ops"
-    if (Test-Path $symlink) { Remove-Item $symlink -Force -Recurse }
-    New-Item -ItemType Junction -Path $symlink -Target $InstallDir | Out-Null
-    Ok "Plugin junction created at $symlink"
+if ((Has "codex") -or (Test-Path $CodexPlugins)) {
+    New-Item -ItemType Directory -Force -Path $CodexPlugins | Out-Null
+    $link = Join-Path $CodexPlugins "ssh-ops"
+    if (Test-Path $link) { Remove-Item $link -Force -Recurse }
+    New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
+    Ok "Plugin junction at $link"
 } else {
-    Warn "Codex plugins directory not found — skipping. Create junction manually:"
-    Write-Host "     New-Item -ItemType Junction -Path `"$CodexPluginsDir\ssh-ops`" -Target `"$InstallDir`""
+    Warn "Codex not detected — skipping. Create junction manually:"
+    Write-Host "     New-Item -ItemType Junction -Path `"$CodexPlugins\ssh-ops`" -Target `"$Dir`""
 }
 
-# Config
+# ── Config ─────────────────────────────────────────────────────────────────────
+
 Step "Creating config"
-$ConfigPath = "$InstallDir\ssh-ops.config.yaml"
-if (-not (Test-Path $ConfigPath)) {
-    Copy-Item "$InstallDir\ssh-ops.config.example.yaml" $ConfigPath
-    Ok "Created $ConfigPath"
-    Write-Host "     Edit it to add your server profiles."
+$cfg = Join-Path $Dir "ssh-ops.config.yaml"
+if (-not (Test-Path $cfg)) {
+    Copy-Item (Join-Path $Dir "ssh-ops.config.example.yaml") $cfg
+    Ok "Created $cfg — edit it to add your server profiles"
 } else {
-    Ok "Config already exists at $ConfigPath"
+    Ok "Config unchanged at $cfg"
 }
 
 Write-Host ""
-Write-Host "Done. Restart Claude Code or Codex to activate the ssh-ops tools." -ForegroundColor Cyan
+Write-Host "Done. Restart Claude Code or Codex to activate ssh-ops." -ForegroundColor Cyan

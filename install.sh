@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git"
-
-# Default install dir: macOS uses ~/Library/Application Support, Linux uses ~/.local/share
-if [ -z "${SSH_OPS_DIR:-}" ]; then
-  if [ "$(uname)" = "Darwin" ]; then
-    INSTALL_DIR="$HOME/Library/Application Support/ssh-ops-mcp"
-  else
-    INSTALL_DIR="$HOME/.local/share/ssh-ops-mcp"
-  fi
-else
-  INSTALL_DIR="$SSH_OPS_DIR"
-fi
-
-CODEX_PLUGINS_DIR="${CODEX_PLUGINS_DIR:-$HOME/.codex/plugins}"
+BASE="https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main"
+DIR="${SSH_OPS_DIR:-$HOME/.ssh-ops}"
+CODEX_PLUGINS="${CODEX_PLUGINS_DIR:-$HOME/.codex/plugins}"
+OS="$(uname -s)"
 
 bold=$(tput bold 2>/dev/null || true)
 green=$(tput setaf 2 2>/dev/null || true)
@@ -24,58 +14,87 @@ reset=$(tput sgr0 2>/dev/null || true)
 step() { echo "${bold}==> $*${reset}"; }
 ok()   { echo "${green}✓  $*${reset}"; }
 warn() { echo "${yellow}!  $*${reset}"; }
+has()  { command -v "$1" >/dev/null 2>&1; }
 
-# Prerequisites
-for bin in git node; do
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    echo "Error: $bin not found. Install it and retry." >&2
-    exit 1
-  fi
-done
+# ── Dependencies ──────────────────────────────────────────────────────────────
 
-# Clone or update
-step "Installing SSH Ops to $INSTALL_DIR"
-if [ -d "$INSTALL_DIR/.git" ]; then
-  git -C "$INSTALL_DIR" pull --ff-only --quiet
-  ok "Updated existing installation"
-else
-  git clone --quiet "$REPO" "$INSTALL_DIR"
-  ok "Cloned repository"
+step "Checking dependencies"
+
+# curl (bootstrap dep — if missing we can't do anything)
+if ! has curl; then
+  echo "Error: curl not found. Install it and retry." >&2; exit 1
 fi
 
-# Claude Code
-step "Setting up Claude Code"
-if command -v claude >/dev/null 2>&1; then
-  if claude mcp add ssh-ops node "$INSTALL_DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
-    ok "MCP server registered with Claude Code"
-  else
-    warn "Already registered or failed. Re-run manually:"
-    echo "     claude mcp add ssh-ops node $INSTALL_DIR/scripts/ssh-mcp-server.mjs"
-  fi
+# Node.js
+if ! has node; then
+  warn "node not found — installing via nvm"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+  # shellcheck disable=SC1090
+  [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+  nvm install --lts --no-progress
+  ok "Node.js $(node --version) installed via nvm"
 else
-  warn "claude CLI not found — skipping. Register manually after installing Claude Code:"
-  echo "     claude mcp add ssh-ops node $INSTALL_DIR/scripts/ssh-mcp-server.mjs"
+  ok "node $(node --version)"
 fi
 
-# Codex
+# Claude Code CLI
+if ! has claude; then
+  warn "claude CLI not found — installing via npm"
+  npm install -g @anthropic-ai/claude-code --quiet
+  ok "claude CLI installed"
+else
+  ok "claude $(claude --version 2>/dev/null | head -1 || echo '')"
+fi
+
+# ── Download files ─────────────────────────────────────────────────────────────
+
+step "Installing SSH Ops to $DIR"
+mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/skills/ssh-ops"
+
+fetch() { curl -fsSL "$BASE/$1" -o "$DIR/$1"; }
+
+fetch scripts/ssh-mcp-server.mjs
+fetch scripts/ssh-core.mjs
+fetch scripts/ssh-ops.mjs
+fetch scripts/ssh-cli-options.mjs
+fetch ssh-ops.config.example.yaml
+fetch .codex-plugin/plugin.json
+fetch skills/ssh-ops/SKILL.md
+
+ok "Files downloaded"
+
+# ── Claude Code ────────────────────────────────────────────────────────────────
+
+step "Registering MCP server with Claude Code"
+if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
+  ok "Registered ssh-ops"
+else
+  warn "Already registered. Re-register manually:"
+  echo "     claude mcp remove ssh-ops && claude mcp add ssh-ops node \"$DIR/scripts/ssh-mcp-server.mjs\""
+fi
+
+# ── Codex ──────────────────────────────────────────────────────────────────────
+
 step "Setting up Codex"
-if command -v codex >/dev/null 2>&1 || [ -d "$CODEX_PLUGINS_DIR" ]; then
-  mkdir -p "$CODEX_PLUGINS_DIR"
-  ln -sfn "$INSTALL_DIR" "$CODEX_PLUGINS_DIR/ssh-ops"
-  ok "Plugin symlinked at $CODEX_PLUGINS_DIR/ssh-ops"
+if has codex || [ -d "$CODEX_PLUGINS" ]; then
+  mkdir -p "$CODEX_PLUGINS"
+  ln -sfn "$DIR" "$CODEX_PLUGINS/ssh-ops"
+  ok "Plugin linked at $CODEX_PLUGINS/ssh-ops"
 else
-  warn "Codex plugins directory not found — skipping. Symlink manually:"
-  echo "     ln -sfn $INSTALL_DIR <your-codex-plugins-dir>/ssh-ops"
+  warn "Codex not detected — skipping. Link manually:"
+  echo "     ln -sfn \"$DIR\" <codex-plugins-dir>/ssh-ops"
 fi
 
-# Config
+# ── Config ─────────────────────────────────────────────────────────────────────
+
 step "Creating config"
-if [ ! -f "$INSTALL_DIR/ssh-ops.config.yaml" ]; then
-  cp "$INSTALL_DIR/ssh-ops.config.example.yaml" "$INSTALL_DIR/ssh-ops.config.yaml"
-  ok "Created $INSTALL_DIR/ssh-ops.config.yaml — edit it to add your server profiles"
+if [ ! -f "$DIR/ssh-ops.config.yaml" ]; then
+  cp "$DIR/ssh-ops.config.example.yaml" "$DIR/ssh-ops.config.yaml"
+  ok "Created $DIR/ssh-ops.config.yaml — edit it to add your server profiles"
 else
-  ok "Config already exists at $INSTALL_DIR/ssh-ops.config.yaml"
+  ok "Config unchanged at $DIR/ssh-ops.config.yaml"
 fi
 
 echo ""
-echo "${bold}Done.${reset} Restart Claude Code or Codex to activate the ssh-ops tools."
+echo "${bold}Done.${reset} Restart Claude Code or Codex to activate ssh-ops."
