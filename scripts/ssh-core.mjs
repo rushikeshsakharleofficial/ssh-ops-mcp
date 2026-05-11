@@ -297,10 +297,11 @@ export async function runSshCommand(input = {}) {
       sshArgs.push(input.command);
     }
   } else {
-    const remoteCommand = input.sudo ? ["sudo", "-n", "bash", "-s"] : ["bash", "-s"];
+    const useSudo = Boolean(input.sudo) || targetInfo.options.access === "sudo";
+    const remoteCommand = useSudo ? ["sudo", "-n", "bash", "-s"] : ["bash", "-s"];
     sshArgs.push(...remoteCommand);
     stdin = targetInfo.remoteJump
-      ? buildRemoteJumpScript(input, targetInfo.remoteJump, targetInfo.options)
+      ? buildRemoteJumpScript({ ...input, sudo: useSudo }, targetInfo.remoteJump, targetInfo.options)
       : buildRemoteScript(input);
   }
 
@@ -318,7 +319,7 @@ export async function runSshCommand(input = {}) {
     targetLabel: targetInfo.targetLabel,
     remoteJump: targetInfo.remoteJump,
     mode,
-    sudo: Boolean(input.sudo)
+    sudo: Boolean(input.sudo) || targetInfo.options.access === "sudo"
   };
 }
 

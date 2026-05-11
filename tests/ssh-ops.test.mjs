@@ -318,3 +318,30 @@ test("logSearchScript defaults to 100 lines", async () => {
   const script = logSearchScript({});
   assert.ok(script.includes("-n 100"), "should default to 100 lines");
 });
+
+test("resolveTarget merges access:sudo from profile into options", async () => {
+  const configPath = writeTempConfig({
+    profiles: {
+      myserver: {
+        host: "1.2.3.4",
+        user: "deploy",
+        access: "sudo"
+      }
+    }
+  });
+  const previousConfig = process.env.SSH_OPS_CONFIG;
+  process.env.SSH_OPS_CONFIG = configPath;
+
+  try {
+    const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=access-sudo-${Date.now()}`;
+    const { resolveTarget } = await import(moduleUrl);
+    const target = resolveTarget({ target: "myserver" });
+    assert.equal(target.options.access, "sudo", "options.access should be 'sudo'");
+  } finally {
+    if (previousConfig === undefined) {
+      delete process.env.SSH_OPS_CONFIG;
+    } else {
+      process.env.SSH_OPS_CONFIG = previousConfig;
+    }
+  }
+});

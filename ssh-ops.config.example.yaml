@@ -13,6 +13,7 @@ profiles:
     host: server.example.com
     user: deploy
     port: 22
+    # access: sudo   # set to "sudo" to always run commands via sudo -n
     extraArgs: []
   # bastion:
   #   host: bastion.example.com
