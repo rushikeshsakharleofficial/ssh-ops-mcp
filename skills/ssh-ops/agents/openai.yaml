@@ -1,13 +1,14 @@
 display_name: SSH Ops
-short_description: 15 SSH tools for remote Linux server ops — inventory, health, files, services, packages, cron, network, dynamic profile management.
+short_description: 21 SSH tools for remote Linux server ops — inventory, files, services, packages, cron, network, IP assignment, profiles, jump chain.
 long_description: |
-  SSH Ops provides 15 MCP tools for operating remote Linux servers over SSH.
+  SSH Ops provides 21 MCP tools for operating remote Linux servers over SSH.
   Covers hardware inventory, health checks, disk reports, log search, network
   probing (ping/port/TLS), file read/write/patch (binary-safe), systemd service
   control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD,
-  parallel multi-host execution, and dynamic profile management (add/remove
-  servers including AES-256-GCM encrypted password storage). Uses your local
-  ssh binary and existing keys.
+  parallel multi-host execution, IP address assignment (permanent via netplan /
+  NetworkManager / network-scripts / systemd-networkd / rc.local), dynamic
+  profile management with AES-256-GCM encrypted passwords, SSH -J jump chain
+  management, and SSH key discovery. Uses your local ssh binary and existing keys.
 default_prompt: Run a health check on my production server with SSH Ops.
 example_prompts:
   - Check my server hardware with SSH Ops.
@@ -20,3 +21,6 @@ example_prompts:
   - Replace line 5 in /etc/hosts with a new entry.
   - Add a new server with password login to SSH Ops profiles.
   - Remove the staging server from SSH Ops profiles.
+  - Add a jump/bastion server to the SSH hop chain.
+  - Assign two static IPs to eth0 on my production server permanently.
+  - List available SSH keys on this machine.
