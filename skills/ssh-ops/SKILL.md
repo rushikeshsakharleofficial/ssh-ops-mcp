@@ -100,6 +100,13 @@ Instead:
 - CONFIRM writes: `ssh_file_write/patch`, `ssh_service` (non-status), `ssh_package` (non-list/search), `ssh_cron` (add/remove), `ssh_ip_assign`, `ssh_user` (add/del/mod/passwd), `ssh_chmod`, `ssh_sudo_rule` (add/remove)
 - Summarize output; skip raw walls unless asked
 
+## Mutating tools — confirm param required
+
+All write/mutating tools require `confirm:true` parameter, or server returns error.
+Mutating: ssh_file_write, ssh_file_patch, ssh_service (start/stop/restart/enable/disable),
+ssh_package (install/remove/update/upgrade), ssh_cron (add/remove), ssh_ip_assign,
+ssh_user (add/del/mod/passwd/lock/unlock), ssh_chmod, ssh_sudo_rule (add/remove).
+
 ## Double confirmation — critical / destructive commands
 
 For the operations below, ask **twice** before executing. First ask states what will happen; second ask requires explicit "yes" before calling any tool.
@@ -129,3 +136,11 @@ Final confirmation 2/2: This cannot be undone. Type "yes" again to execute →
 ```
 
 If user says "proceed automatically" or "no confirmation needed" at session start, skip to single confirm for writes but still double-confirm for irreversible destructive actions (data deletion, reboots, mass multi-host writes).
+
+## Auto-update
+
+Auto-update disabled by default. Set `SSH_OPS_AUTO_UPDATE=1` env var to enable.
+
+## Truncation
+
+Truncation messages include exact byte counts: `[OUTPUT TRUNCATED: received 2345678 bytes, limit 2000000 bytes — 345678 bytes dropped]`.
