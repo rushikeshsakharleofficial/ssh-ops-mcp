@@ -267,8 +267,8 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 
 | Tool | Description |
 |------|-------------|
-| `ssh_run` | Run a command or script on a single remote host |
-| `ssh_run_multi` | Run a command on multiple hosts in parallel; returns per-target results as text or JSON |
+| `ssh_run` | Run a command or script on a single remote host; params: `retries` (default 2), `retryDelayMs` (default 1500) |
+| `ssh_run_multi` | Run a command on multiple hosts in parallel; returns per-target results as text or JSON; params: `maxConcurrent` (default 10), `retries` (default 2), `retryDelayMs` (default 1500) |
 
 ### File Operations
 
@@ -365,6 +365,8 @@ CLI options:
 - **Dependencies** — installer auto-detects the OS package manager (apt/dnf/yum/apk/brew/pacman/zypper) and installs curl, ssh, node, claude CLI, and sshpass without requiring any manual pre-work. On Windows, enables the built-in OpenSSH capability for ssh.
 - **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles and jump servers). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
 - **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
+- **Auto-retry on transient SSH failures** — 2 retries with 1.5× backoff on connection reset, timeout, kex errors
+- **Batched multi-host execution** — ssh_run_multi processes targets in groups of 10 (configurable) to prevent jump server overload
 - **jumpChain (-J multi-hop)** — when `jumpChain` is set in defaults, SSH Ops builds a `-J user@host1,user@host2,...` argument from the chain profiles. SSH handles each hop natively. Connecting to a server that's already in the chain skips the flag.
 - **jumpProfile (nested SSH)** — legacy two-hop mode: connects to jump host, then runs `sudo -n -u <jumpUser> ssh <destination>` from there via a heredoc. Useful when keys for internal targets live on the jump server.
 - **localSwitchUser** — when ssh-ops itself runs on a bastion/jump server, set `localSwitchUser` to run `sudo -n -u <user> ssh <destination>` locally. Keys stay under the service account; the MCP process runs as the operator user.
