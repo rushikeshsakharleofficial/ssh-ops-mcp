@@ -296,6 +296,9 @@ export function addProfile(name, profile) {
     ...(profile.port && { port: Number(profile.port) }),
     ...(profile.identityFile && { identityFile: profile.identityFile }),
     ...(profile.access && { access: profile.access }),
+    ...(profile.jumpProfile && { jumpProfile: profile.jumpProfile }),
+    ...(profile.jumpUser && { jumpUser: profile.jumpUser }),
+    ...(profile.targetUser && { targetUser: profile.targetUser }),
     ...(Array.isArray(profile.extraArgs) && profile.extraArgs.length > 0 && { extraArgs: profile.extraArgs })
   };
   if (profile.password) {

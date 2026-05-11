@@ -406,17 +406,20 @@ const tools = [
   {
     name: "ssh_add_profile",
     title: "Add SSH Profile",
-    description: "Add or update an SSH profile in the dynamic config. Passwords are stored AES-256-GCM encrypted. Use for onboarding new servers or storing password-based credentials.",
+    description: "Add or update an SSH profile in the dynamic config. Passwords are stored AES-256-GCM encrypted. Supports jump server routing (jumpProfile + jumpUser) for nested SSH flows where you need to switch users on a bastion before connecting to the target.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Profile name (alphanumeric, hyphens, underscores)." },
         host: { type: "string", description: "Hostname or IP address." },
-        user: { type: "string", description: "SSH username." },
+        user: { type: "string", description: "SSH username on the target host." },
         port: { type: "number", description: "SSH port. Default 22." },
         password: { type: "string", description: "SSH password. Stored encrypted. Requires sshpass on the local machine." },
         identityFile: { type: "string", description: "Path to SSH private key file." },
         access: { type: "string", enum: ["normal", "sudo"], description: "Set to sudo to prepend sudo to all commands for this profile." },
+        jumpProfile: { type: "string", description: "Profile name of the jump/bastion server to connect through first." },
+        jumpUser: { type: "string", description: "User to switch to on the jump server (via sudo -n -u) before running the destination SSH. Use when keys for this target live on the jump server under a different user." },
+        targetUser: { type: "string", description: "Override the destination SSH username when routing through a jumpProfile." },
         extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." }
       },
       required: ["name", "host"]
@@ -714,6 +717,9 @@ async function callTool(name, args) {
       password: args.password,
       identityFile: args.identityFile,
       access: args.access,
+      jumpProfile: args.jumpProfile,
+      jumpUser: args.jumpUser,
+      targetUser: args.targetUser,
       extraArgs: args.extraArgs
     });
     return textResult(JSON.stringify(profiles, null, 2));

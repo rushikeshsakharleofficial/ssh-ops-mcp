@@ -96,6 +96,74 @@ else
   ok "Device-specific AES-256-GCM key generated at $KEY_FILE"
 fi
 
+# ── Claude Code skill plugin ───────────────────────────────────────────────────
+
+step "Claude Code skill plugin"
+CLAUDE_PLUGINS="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}"
+PLUGIN_CACHE="$CLAUDE_PLUGINS/cache/rushikeshsakharleofficial/ssh-ops/latest"
+INSTALLED_JSON="$CLAUDE_PLUGINS/installed_plugins.json"
+
+if [ -d "$CLAUDE_PLUGINS" ]; then
+  mkdir -p "$PLUGIN_CACHE/skills/ssh-ops"
+
+  # CLAUDE.md — skill instructions loaded by Claude Code
+  cat > "$PLUGIN_CACHE/CLAUDE.md" << 'CLAUDEMD'
+# SSH Ops Skill
+
+Use the `ssh-ops` skill when the user wants to connect to remote SSH servers, run commands, manage files, check health/disk/logs, assign IPs, or manage server profiles and jump chains.
+
+## Available Skills
+- `ssh-ops:ssh-ops` — full SSH Ops tool reference and usage guidance
+CLAUDEMD
+
+  # gemini-extension.json — loaded by Gemini CLI
+  VERSION_TAG=$(cat "$DIR/VERSION" 2>/dev/null || echo "latest")
+  cat > "$PLUGIN_CACHE/gemini-extension.json" << GEMEXT
+{
+  "name": "ssh-ops",
+  "description": "24 SSH tools for remote Linux server ops — inventory, health, disk, files, services, packages, cron, IP assignment, jump chains, and dynamic profile management.",
+  "version": "$VERSION_TAG",
+  "contextFileName": "GEMINI.md"
+}
+GEMEXT
+
+  # GEMINI.md — loaded by Gemini CLI
+  cat > "$PLUGIN_CACHE/GEMINI.md" << 'GEMINIMD'
+@./skills/ssh-ops/SKILL.md
+GEMINIMD
+
+  # Copy SKILL.md into plugin
+  cp "$DIR/skills/ssh-ops/SKILL.md" "$PLUGIN_CACHE/skills/ssh-ops/SKILL.md"
+
+  # Register in installed_plugins.json
+  if [ -f "$INSTALLED_JSON" ]; then
+    node -e "
+      const fs = require('fs');
+      const f = '$INSTALLED_JSON';
+      let d = {};
+      try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+      d.version = d.version || 2;
+      d.plugins = d.plugins || {};
+      const key = 'ssh-ops@rushikeshsakharleofficial';
+      const entry = {
+        scope: 'user',
+        installPath: '$PLUGIN_CACHE',
+        version: '$(cat "$DIR/VERSION" 2>/dev/null || echo latest)',
+        installedAt: d.plugins[key]?.[0]?.installedAt || new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      };
+      d.plugins[key] = [entry];
+      fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+    " 2>/dev/null && ok "Registered skill plugin (Claude Code + Gemini)" \
+      || warn "Could not update installed_plugins.json — restart Claude to load skill"
+  else
+    ok "Skill files installed at $PLUGIN_CACHE"
+    info "Restart Claude Code to activate the ssh-ops skill"
+  fi
+else
+  skip "~/.claude not found — skipping skill plugin"
+fi
+
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
 add_mcp() {
   local file="$1" mode="${2:-standard}"
@@ -225,12 +293,67 @@ fi
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 step "Config"
-if [ ! -f "$DIR/ssh-ops.config.yaml" ]; then
-  cp "$DIR/ssh-ops.config.example.yaml" "$DIR/ssh-ops.config.yaml"
-  ok "Created $DIR/ssh-ops.config.yaml"
-  info "Edit it to add your server profiles"
+CFG="$DIR/ssh-ops.config.yaml"
+if [ ! -f "$CFG" ]; then
+  cp "$DIR/ssh-ops.config.example.yaml" "$CFG"
+  ok "Created $CFG"
+
+  # Interactive setup wizard (runs when stdin is a terminal)
+  if [ -t 0 ]; then
+    echo
+    info "Quick setup — configure your first server (press Enter to skip any field)"
+    echo
+    printf "  Server host or IP: "; read -r _host
+    if [ -n "$_host" ]; then
+      printf "  SSH user [root]: "; read -r _user; _user="${_user:-root}"
+      printf "  SSH port [22]: "; read -r _port; _port="${_port:-22}"
+      printf "  Profile name [server1]: "; read -r _pname; _pname="${_pname:-server1}"
+      printf "  Use as default target? [Y/n]: "; read -r _default
+
+      # Ask for jump server
+      printf "  Route through a jump/bastion server? [y/N]: "; read -r _usejump
+      _jump_block=""
+      if echo "$_usejump" | grep -qi "^y"; then
+        printf "  Jump server host or IP: "; read -r _jhost
+        printf "  Jump server SSH user [$USER]: "; read -r _juser; _juser="${_juser:-$USER}"
+        printf "  Switch to user on jump server (leave blank if not needed): "; read -r _jumpuser
+        printf "  Jump profile name [bastion]: "; read -r _jpname; _jpname="${_jpname:-bastion}"
+        _jump_block="
+  $_jpname:
+    host: $_jhost
+    user: $_juser"
+        _jump_ref="
+    jumpProfile: $_jpname"
+        [ -n "$_jumpuser" ] && _jump_ref="${_jump_ref}
+    jumpUser: $_jumpuser"
+      fi
+
+      # Write config
+      _default_line=""
+      echo "$_default" | grep -qi "^n" || _default_line="defaultTarget: $_pname"
+      cat > "$CFG" << YMLEOF
+${_default_line}
+defaults:
+  connectTimeoutSec: 12
+  strictHostKeyChecking: accept-new
+  timeoutMs: 120000
+  maxOutputBytes: 2000000
+profiles:
+  $_pname:
+    host: $_host
+    user: $_user
+    port: $_port${_jump_ref:-}
+${_jump_block:-}
+YMLEOF
+      ok "Config written: $_pname → $_user@$_host${_jhost:+ via $_jpname}"
+    else
+      info "Skipped — edit $CFG to add your servers"
+    fi
+  else
+    info "Edit $CFG to add your server profiles"
+  fi
 else
-  info "Preserved existing $DIR/ssh-ops.config.yaml"
+  info "Preserved existing $CFG"
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────────
