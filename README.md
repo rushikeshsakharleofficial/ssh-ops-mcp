@@ -4,24 +4,44 @@ SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works as a plug
 
 ## Install
 
+**Prerequisites:** `git` and `node` on your PATH.
+
+### macOS / Linux
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
 ```
 
-Clones the repo to `~/.local/share/ssh-ops-mcp`, registers the MCP server with Claude Code, symlinks into the Codex plugins directory, and creates a starter config. Restart your session after running.
+Installs to `~/Library/Application Support/ssh-ops-mcp` (macOS) or `~/.local/share/ssh-ops-mcp` (Linux).
 
-**Prerequisites:** `git` and `node` on your PATH.
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1 | iex
+```
+
+Installs to `%LOCALAPPDATA%\ssh-ops-mcp`.
+
+---
+
+Each installer:
+- Clones the repo (or `git pull` if already installed)
+- Runs `claude mcp add ssh-ops node <path>/scripts/ssh-mcp-server.mjs` if `claude` CLI is found
+- Symlinks/junctions into the Codex plugins directory if Codex is detected
+- Creates a starter `ssh-ops.config.yaml`
+
+Restart Claude Code or Codex after running.
 
 **Custom install location:**
 ```bash
+# macOS / Linux
 SSH_OPS_DIR=~/tools/ssh-ops curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
+
+# Windows
+$env:SSH_OPS_DIR="C:\tools\ssh-ops"; irm https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1 | iex
 ```
 
-**Update:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
-```
-Re-running does a `git pull` on the existing installation.
+**Update:** re-run the same command — it does `git pull` on the existing installation.
 
 ---
 

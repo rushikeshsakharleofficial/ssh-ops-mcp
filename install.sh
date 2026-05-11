@@ -2,7 +2,18 @@
 set -euo pipefail
 
 REPO="https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git"
-INSTALL_DIR="${SSH_OPS_DIR:-$HOME/.local/share/ssh-ops-mcp}"
+
+# Default install dir: macOS uses ~/Library/Application Support, Linux uses ~/.local/share
+if [ -z "${SSH_OPS_DIR:-}" ]; then
+  if [ "$(uname)" = "Darwin" ]; then
+    INSTALL_DIR="$HOME/Library/Application Support/ssh-ops-mcp"
+  else
+    INSTALL_DIR="$HOME/.local/share/ssh-ops-mcp"
+  fi
+else
+  INSTALL_DIR="$SSH_OPS_DIR"
+fi
+
 CODEX_PLUGINS_DIR="${CODEX_PLUGINS_DIR:-$HOME/.codex/plugins}"
 
 bold=$(tput bold 2>/dev/null || true)
