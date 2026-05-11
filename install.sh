@@ -70,6 +70,24 @@ fetch .codex-plugin/plugin.json
 fetch skills/ssh-ops/SKILL.md
 ok "Files downloaded"
 
+# ── Encryption key ─────────────────────────────────────────────────────────────
+
+step "Encryption key"
+KEY_FILE="$DIR/.encryption-key"
+if [ -f "$KEY_FILE" ]; then
+  skip "Key already exists — preserved"
+else
+  node -e "
+    const { randomBytes } = require('crypto');
+    const { writeFileSync, chmodSync } = require('fs');
+    const key = randomBytes(32).toString('hex') + '\n';
+    writeFileSync('$KEY_FILE', key, { mode: 0o600 });
+    try { chmodSync('$KEY_FILE', 0o600); } catch {}
+  "
+  chmod 600 "$KEY_FILE" 2>/dev/null || true
+  ok "Device-specific AES-256-GCM key generated at $KEY_FILE"
+fi
+
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
 add_mcp() {
   local file="$1" mode="${2:-standard}"

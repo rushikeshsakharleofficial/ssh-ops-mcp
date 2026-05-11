@@ -57,6 +57,25 @@ foreach ($f in $files) {
 }
 Ok "Files downloaded"
 
+# ── Encryption key ─────────────────────────────────────────────────────────────
+
+Step "Encryption key"
+$KeyFile = "$Dir\.encryption-key"
+if (Test-Path $KeyFile) {
+    Skip "Key already exists — preserved"
+} else {
+    $env:KEY_FILE = $KeyFile
+    node -e @"
+const { randomBytes } = require('crypto');
+const { writeFileSync } = require('fs');
+const key = randomBytes(32).toString('hex') + '\n';
+writeFileSync(process.env.KEY_FILE, key, { encoding: 'utf8' });
+"@
+    Remove-Item Env:\KEY_FILE -ErrorAction SilentlyContinue
+    & icacls $KeyFile /inheritance:r /grant:r "${env:USERNAME}:F" 2>&1 | Out-Null
+    Ok "Device-specific AES-256-GCM key generated at $KeyFile"
+}
+
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
 function AddMcp {
     param([string]$File, [string]$Mode = "standard")
