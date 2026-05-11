@@ -417,3 +417,54 @@ test("filePatchScript regex produces sed -E script with exported pattern vars", 
   assert.ok(script.includes("$_f.tmp"), "should use temp file");
   assert.ok(script.includes(".bak."), "should backup");
 });
+
+test("formatMultiRunResult text produces labeled sections per target", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=multi-text-${Date.now()}`;
+  const { formatMultiRunResult } = await import(moduleUrl);
+  const results = [
+    { target: "prod", targetLabel: "prod", exitCode: 0, stdout: "web-01\n", stderr: "", durationMs: 200, timedOut: false },
+    { target: "staging", targetLabel: "staging", exitCode: 1, stdout: "", stderr: "refused", durationMs: 150, timedOut: false }
+  ];
+  const out = formatMultiRunResult(results, "text");
+  assert.ok(out.includes("=== prod ==="), "should label prod section");
+  assert.ok(out.includes("=== staging ==="), "should label staging section");
+  assert.ok(out.includes("web-01"), "should include prod stdout");
+  assert.ok(out.includes("refused"), "should include staging stderr");
+});
+
+test("formatMultiRunResult json produces array with expected fields", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=multi-json-${Date.now()}`;
+  const { formatMultiRunResult } = await import(moduleUrl);
+  const results = [
+    { target: "prod", targetLabel: "prod", exitCode: 0, stdout: "ok\n", stderr: "", durationMs: 100, timedOut: false }
+  ];
+  const out = formatMultiRunResult(results, "json");
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].target, "prod");
+  assert.equal(parsed[0].exitCode, 0);
+  assert.equal(parsed[0].error, null);
+});
+
+test("formatMultiRunResult text shows error line for rejected target", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=multi-text-err-${Date.now()}`;
+  const { formatMultiRunResult } = await import(moduleUrl);
+  const results = [
+    { target: "bad", exitCode: null, error: 'Profile "bad" does not define a host.' }
+  ];
+  const out = formatMultiRunResult(results, "text");
+  assert.ok(out.includes("=== bad ==="), "should label bad section");
+  assert.ok(out.includes('error: Profile "bad" does not define a host.'), "should show error message");
+});
+
+test("formatMultiRunResult json includes exitCode null and error string for rejected target", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=multi-json-err-${Date.now()}`;
+  const { formatMultiRunResult } = await import(moduleUrl);
+  const results = [
+    { target: "bad", exitCode: null, error: "no host", stdout: "", stderr: "", durationMs: 0, timedOut: false }
+  ];
+  const out = formatMultiRunResult(results, "json");
+  const parsed = JSON.parse(out);
+  assert.equal(parsed[0].exitCode, null);
+  assert.equal(parsed[0].error, "no host");
+});
