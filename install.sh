@@ -5,22 +5,34 @@ BASE="https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/ma
 DIR="${SSH_OPS_DIR:-$HOME/.ssh-ops}"
 CODEX_PLUGINS="${CODEX_PLUGINS_DIR:-$HOME/.codex/plugins}"
 
-bold=$(tput bold 2>/dev/null || true)
+# ── Colors ────────────────────────────────────────────────────────────────────
+bold=$(tput bold   2>/dev/null || true)
+cyan=$(tput setaf 6 2>/dev/null || true)
 green=$(tput setaf 2 2>/dev/null || true)
 yellow=$(tput setaf 3 2>/dev/null || true)
-reset=$(tput sgr0 2>/dev/null || true)
+red=$(tput setaf 1  2>/dev/null || true)
+blue=$(tput setaf 4 2>/dev/null || true)
+dim=$(tput dim      2>/dev/null || true)
+reset=$(tput sgr0   2>/dev/null || true)
 
-step() { echo "${bold}==> $*${reset}"; }
-ok()   { echo "${green}✓  $*${reset}"; }
-warn() { echo "${yellow}-  $*${reset}"; }
+step() { echo; echo "${bold}${cyan}▶  $*${reset}"; }
+ok()   { echo "${green}  ✓  $*${reset}"; }
+skip() { echo "${dim}  ·  $*${reset}"; }
+warn() { echo "${yellow}  ⚠  $*${reset}"; }
+err()  { echo "${red}  ✗  $*${reset}"; }
+info() { echo "${blue}  →  $*${reset}"; }
 has()  { command -v "$1" >/dev/null 2>&1; }
+
+echo
+echo "${bold}${cyan}  SSH Ops Installer${reset}"
+echo "${dim}  Installing to: $DIR${reset}"
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
 step "Checking dependencies"
 
 if ! has curl; then
-  echo "Error: curl not found. Install it and retry." >&2; exit 1
+  err "curl not found — install it and retry." >&2; exit 1
 fi
 
 if ! has node; then
@@ -59,8 +71,6 @@ fetch skills/ssh-ops/SKILL.md
 ok "Files downloaded"
 
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
-# Usage: add_mcp <file> [vscode]
-# vscode flag uses { mcp.servers } structure instead of { mcpServers }
 add_mcp() {
   local file="$1" mode="${2:-standard}"
   mkdir -p "$(dirname "$file")"
@@ -90,9 +100,13 @@ step "Claude Code"
 if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
   ok "Registered"
 else
-  warn "Already registered — re-registering"
+  info "Already registered — re-registering"
   claude mcp remove ssh-ops 2>/dev/null || true
-  claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null && ok "Re-registered" || warn "Failed"
+  if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
+    ok "Re-registered"
+  else
+    err "Registration failed — run manually: claude mcp add ssh-ops node \"$DIR/scripts/ssh-mcp-server.mjs\""
+  fi
 fi
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
@@ -103,7 +117,7 @@ if has codex || [ -d "$CODEX_PLUGINS" ]; then
   ln -sfn "$DIR" "$CODEX_PLUGINS/ssh-ops"
   ok "Linked at $CODEX_PLUGINS/ssh-ops"
 else
-  warn "Not detected — skipping"
+  skip "Not detected — skipping"
 fi
 
 # ── Cursor ─────────────────────────────────────────────────────────────────────
@@ -113,7 +127,7 @@ if has cursor || [ -d "$HOME/.cursor" ]; then
   add_mcp "$HOME/.cursor/mcp.json"
   ok "Registered in ~/.cursor/mcp.json"
 else
-  warn "Not detected — skipping"
+  skip "Not detected — skipping"
 fi
 
 # ── VS Code Copilot ────────────────────────────────────────────────────────────
@@ -128,7 +142,7 @@ if has code || [ -d "$HOME/.config/Code" ] || [ -d "$HOME/Library/Application Su
   add_mcp "$VSCODE_SETTINGS" "vscode"
   ok "Registered in $VSCODE_SETTINGS"
 else
-  warn "Not detected — skipping"
+  skip "Not detected — skipping"
 fi
 
 # ── Gemini CLI ─────────────────────────────────────────────────────────────────
@@ -136,10 +150,13 @@ fi
 step "Gemini CLI"
 if has gemini; then
   gemini mcp remove ssh-ops --scope user 2>/dev/null || true
-  gemini mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" --scope user 2>/dev/null && \
-    ok "Registered (user scope)" || warn "gemini mcp add failed"
+  if gemini mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" --scope user 2>/dev/null; then
+    ok "Registered (user scope)"
+  else
+    err "gemini mcp add failed"
+  fi
 else
-  warn "Not detected — skipping"
+  skip "Not detected — skipping"
 fi
 
 # ── Antigravity IDE ────────────────────────────────────────────────────────────
@@ -149,7 +166,7 @@ if [ -d "$HOME/.gemini/antigravity" ] || has antigravity; then
   add_mcp "$HOME/.gemini/antigravity/mcp_config.json"
   ok "Registered in ~/.gemini/antigravity/mcp_config.json"
 else
-  warn "Not detected — skipping"
+  skip "Not detected — skipping"
 fi
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -157,10 +174,15 @@ fi
 step "Config"
 if [ ! -f "$DIR/ssh-ops.config.yaml" ]; then
   cp "$DIR/ssh-ops.config.example.yaml" "$DIR/ssh-ops.config.yaml"
-  ok "Created $DIR/ssh-ops.config.yaml — edit it to add your server profiles"
+  ok "Created $DIR/ssh-ops.config.yaml"
+  info "Edit it to add your server profiles"
 else
-  ok "Preserved existing $DIR/ssh-ops.config.yaml"
+  info "Preserved existing $DIR/ssh-ops.config.yaml"
 fi
 
-echo ""
-echo "${bold}Done.${reset} Restart Claude Code, Codex, Cursor, or VS Code to activate ssh-ops."
+# ── Done ───────────────────────────────────────────────────────────────────────
+
+echo
+echo "${bold}${green}  ✓  SSH Ops installed successfully.${reset}"
+echo "${dim}  Restart Claude Code, Codex, Cursor, VS Code, or Gemini to activate.${reset}"
+echo

@@ -4,10 +4,18 @@ $Base         = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh
 $Dir          = if ($env:SSH_OPS_DIR)       { $env:SSH_OPS_DIR }       else { "$env:USERPROFILE\.ssh-ops" }
 $CodexPlugins = if ($env:CODEX_PLUGINS_DIR) { $env:CODEX_PLUGINS_DIR } else { "$env:USERPROFILE\.codex\plugins" }
 
-function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
-function Ok($m)   { Write-Host "  v  $m" -ForegroundColor Green }
-function Warn($m) { Write-Host "  -  $m" -ForegroundColor Yellow }
+# ── Color helpers ─────────────────────────────────────────────────────────────
+function Step($m) { Write-Host; Write-Host "▶  $m" -ForegroundColor Cyan -NoNewline; Write-Host "" }
+function Ok($m)   { Write-Host "  ✓  $m" -ForegroundColor Green }
+function Skip($m) { Write-Host "  ·  $m" -ForegroundColor DarkGray }
+function Warn($m) { Write-Host "  ⚠  $m" -ForegroundColor Yellow }
+function Err($m)  { Write-Host "  ✗  $m" -ForegroundColor Red }
+function Info($m) { Write-Host "  →  $m" -ForegroundColor Blue }
 function Has($c)  { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
+
+Write-Host
+Write-Host "  SSH Ops Installer" -ForegroundColor Cyan
+Write-Host "  Installing to: $Dir" -ForegroundColor DarkGray
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
@@ -18,10 +26,10 @@ if (-not (Has "node")) {
     if     (Has "winget") { winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements }
     elseif (Has "choco")  { choco install nodejs-lts -y --no-progress }
     elseif (Has "scoop")  { scoop install nodejs-lts }
-    else   { Write-Error "Cannot auto-install Node.js. Install from https://nodejs.org and retry."; exit 1 }
+    else   { Err "Cannot auto-install Node.js. Install from https://nodejs.org and retry."; exit 1 }
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("PATH","User")
-    if (-not (Has "node")) { Write-Error "Node.js installed but not on PATH — restart terminal and re-run."; exit 1 }
+    if (-not (Has "node")) { Err "Node.js installed but not on PATH — restart terminal and re-run."; exit 1 }
     Ok "Node.js $(node --version) installed"
 } else { Ok "node $(node --version)" }
 
@@ -81,12 +89,14 @@ fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
 
 Step "Claude Code"
 $r = & claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1
-if ($LASTEXITCODE -eq 0) { Ok "Registered" }
-else {
-    Warn "Already registered — re-registering"
+if ($LASTEXITCODE -eq 0) {
+    Ok "Registered"
+} else {
+    Info "Already registered — re-registering"
     & claude mcp remove ssh-ops 2>&1 | Out-Null
     & claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
-    Ok "Re-registered"
+    if ($LASTEXITCODE -eq 0) { Ok "Re-registered" }
+    else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
 }
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
@@ -98,7 +108,7 @@ if ((Has "codex") -or (Test-Path $CodexPlugins)) {
     if (Test-Path $link) { Remove-Item $link -Force -Recurse }
     New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
     Ok "Linked at $link"
-} else { Warn "Not detected — skipping" }
+} else { Skip "Not detected — skipping" }
 
 # ── Cursor ─────────────────────────────────────────────────────────────────────
 
@@ -107,7 +117,7 @@ $cursorDir = "$env:USERPROFILE\.cursor"
 if ((Has "cursor") -or (Test-Path $cursorDir)) {
     AddMcp "$cursorDir\mcp.json"
     Ok "Registered in $cursorDir\mcp.json"
-} else { Warn "Not detected — skipping" }
+} else { Skip "Not detected — skipping" }
 
 # ── VS Code Copilot ────────────────────────────────────────────────────────────
 
@@ -116,7 +126,7 @@ $vscodeCfg = "$env:APPDATA\Code\User\settings.json"
 if ((Has "code") -or (Test-Path "$env:APPDATA\Code")) {
     AddMcp $vscodeCfg "vscode"
     Ok "Registered in $vscodeCfg"
-} else { Warn "Not detected — skipping" }
+} else { Skip "Not detected — skipping" }
 
 # ── Gemini CLI ─────────────────────────────────────────────────────────────────
 
@@ -125,8 +135,8 @@ if (Has "gemini") {
     & gemini mcp remove ssh-ops --scope user 2>&1 | Out-Null
     $r = & gemini mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" --scope user 2>&1
     if ($LASTEXITCODE -eq 0) { Ok "Registered (user scope)" }
-    else { Warn "gemini mcp add failed: $r" }
-} else { Warn "Not detected — skipping" }
+    else { Err "gemini mcp add failed: $r" }
+} else { Skip "Not detected — skipping" }
 
 # ── Antigravity IDE ────────────────────────────────────────────────────────────
 
@@ -135,7 +145,7 @@ $antigravityCfg = "$env:USERPROFILE\.gemini\antigravity\mcp_config.json"
 if ((Has "antigravity") -or (Test-Path "$env:USERPROFILE\.gemini\antigravity")) {
     AddMcp $antigravityCfg
     Ok "Registered in $antigravityCfg"
-} else { Warn "Not detected — skipping" }
+} else { Skip "Not detected — skipping" }
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -143,8 +153,13 @@ Step "Config"
 $cfg = Join-Path $Dir "ssh-ops.config.yaml"
 if (-not (Test-Path $cfg)) {
     Copy-Item (Join-Path $Dir "ssh-ops.config.example.yaml") $cfg
-    Ok "Created $cfg — edit it to add your server profiles"
-} else { Ok "Preserved existing $cfg" }
+    Ok "Created $cfg"
+    Info "Edit it to add your server profiles"
+} else { Info "Preserved existing $cfg" }
 
-Write-Host ""
-Write-Host "Done. Restart Claude Code, Codex, Cursor, or VS Code to activate ssh-ops." -ForegroundColor Cyan
+# ── Done ───────────────────────────────────────────────────────────────────────
+
+Write-Host
+Write-Host "  ✓  SSH Ops installed successfully." -ForegroundColor Green
+Write-Host "  Restart Claude Code, Codex, Cursor, VS Code, or Gemini to activate." -ForegroundColor DarkGray
+Write-Host
