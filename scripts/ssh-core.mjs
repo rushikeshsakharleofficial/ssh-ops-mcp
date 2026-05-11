@@ -586,6 +586,12 @@ export function filePatchScript(path, {
   if (!/^[a-zA-Z]*$/.test(flags)) {
     throw new Error("flags must be letters only.");
   }
+  if (pattern !== undefined && String(pattern).includes("|")) {
+    throw new Error("Pattern cannot contain | (sed delimiter). Use [|] to match a literal pipe.");
+  }
+  if (replacement !== undefined && String(replacement).includes("|")) {
+    throw new Error("Replacement cannot contain | (sed delimiter).");
+  }
 
   const parts = ["set +e", `_f=${shellQuote(String(path))}`];
   if (backup) {
