@@ -1680,8 +1680,16 @@ grep -rl "^${uQ} " /etc/sudoers.d/ 2>/dev/null || echo "(none)"
   }
 }
 
-function runProcess(command, args, options = {}) {
-  return new Promise((resolveResult) => {
+async function runProcess(command, args, options = {}) {
+  const retries = typeof options.retries === "number" ? options.retries : 2;
+  const retryDelayMs = typeof options.retryDelayMs === "number" ? options.retryDelayMs : 1500;
+
+  const isRetryable = (result) =>
+    result.exitCode === 255 ||
+    /Connection reset|Connection refused|Connection timed out|kex_exchange|Network unreachable|No route to host/i
+      .test(result.stderr || "");
+
+  const runOnce = () => new Promise((resolveResult) => {
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -1762,6 +1770,19 @@ function runProcess(command, args, options = {}) {
     }
     child.stdin.end();
   });
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, retryDelayMs * attempt));
+    }
+    const result = await runOnce();
+    if (!isRetryable(result) || attempt === retries) {
+      if (attempt > 0 && result.exitCode !== 0) {
+        result.stderr = (result.stderr || "") + `\n[Retried ${attempt}/${retries} times]`;
+      }
+      return result;
+    }
+  }
 }
 
 function shellQuote(value) {

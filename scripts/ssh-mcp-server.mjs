@@ -146,6 +146,14 @@ const tools = [
           type: "number",
           description: "Local timeout in milliseconds."
         },
+        retries: {
+          type: "number",
+          description: "Retry failed connections up to this many times. Default 2. Retries on SSH connection errors (exit 255, connection reset, timeout)."
+        },
+        retryDelayMs: {
+          type: "number",
+          description: "Base delay in ms between retries, multiplied by attempt number. Default 1500."
+        },
         port: {
           type: "number",
           description: "SSH port override."
@@ -345,7 +353,7 @@ const tools = [
   {
     name: "ssh_run_multi",
     title: "Run SSH Command on Multiple Hosts",
-    description: "Run a command on multiple SSH targets in parallel. Returns per-target results.",
+    description: "Run a command on multiple SSH targets. Batched execution (maxConcurrent, default 10) with automatic retry on connection failures (retries, default 2).",
     inputSchema: {
       type: "object",
       properties: {
@@ -362,7 +370,19 @@ const tools = [
         timeoutMs: { type: "number", description: "Per-target timeout ms." },
         sshOptions: { type: "array", items: { type: "string" }, description: "Extra SSH args." },
         identityFile: { type: "string", description: "SSH identity file." },
-        jumpHost: { type: "string", description: "SSH jump host (-J)." }
+        jumpHost: { type: "string", description: "SSH jump host (-J)." },
+        maxConcurrent: {
+          type: "number",
+          description: "Max parallel SSH connections at once. Default 10. Use lower values (5) for large target sets to avoid overwhelming the jump server."
+        },
+        retries: {
+          type: "number",
+          description: "Retry failed connections up to this many times. Default 2. Retries on SSH connection errors (exit 255, connection reset, timeout)."
+        },
+        retryDelayMs: {
+          type: "number",
+          description: "Base delay in ms between retries, multiplied by attempt number. Default 1500."
+        }
       },
       required: ["targets", "command"]
     }
@@ -748,7 +768,7 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_run") {
-    const result = await runSshCommand(args);
+    const result = await runSshCommand({ retries: args.retries ?? 0, retryDelayMs: args.retryDelayMs ?? 1500, ...args });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
@@ -834,7 +854,21 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_run_multi") {
-    const results = await runMultiSshCommand(args.targets, {
+    const maxConcurrent = args.maxConcurrent || 10;
+    const retries = args.retries ?? 2;
+    const retryDelayMs = args.retryDelayMs ?? 1500;
+
+    async function runBatched(targets, fn) {
+      const results = [];
+      for (let i = 0; i < targets.length; i += maxConcurrent) {
+        const batch = targets.slice(i, i + maxConcurrent);
+        const batchResults = await Promise.all(batch.map(fn));
+        results.push(...batchResults);
+      }
+      return results;
+    }
+
+    const perTargetOpts = {
       command: args.command,
       sudo: args.sudo,
       mode: args.mode,
@@ -842,8 +876,14 @@ async function callTool(name, args) {
       timeoutMs: args.timeoutMs,
       sshOptions: args.sshOptions,
       identityFile: args.identityFile,
-      jumpHost: args.jumpHost
-    });
+      jumpHost: args.jumpHost,
+      retries,
+      retryDelayMs
+    };
+
+    const results = await runBatched(args.targets, (target) =>
+      runMultiSshCommand([target], perTargetOpts).then((r) => r[0])
+    );
     const text = formatMultiRunResult(results, args.format || "text");
     const hasError = results.some((r) => r.exitCode !== 0 || r.exitCode === null);
     return textResult(text, hasError);
