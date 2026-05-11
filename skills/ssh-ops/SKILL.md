@@ -8,7 +8,8 @@ description: Use SSH Ops when inspecting, changing, or running commands on remot
 Prefer `ssh-ops` MCP tools when available:
 
 - `ssh_profiles`: list profiles, no connection
-- `ssh_run`: run command/script on remote host
+- `ssh_run`: run command/script on single remote host
+- `ssh_run_multi`: run command on multiple hosts in parallel; `format: "json"` for structured output
 - `ssh_inventory`: OS/CPU/RAM/disk/network inventory
 - `ssh_disk_report`: disk/inode/container storage pressure
 - `ssh_health_report`: load/memory/disk/services/processes/docker snapshot

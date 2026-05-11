@@ -4,12 +4,14 @@ import {
   filePatchScript,
   fileReadScript,
   fileWriteScript,
+  formatMultiRunResult,
   formatRunResult,
   hardwareInventoryScript,
   healthReportScript,
   listProfiles,
   logSearchScript,
   PLUGIN_ROOT,
+  runMultiSshCommand,
   runSshCommand,
   serviceScript
 } from "./ssh-core.mjs";
@@ -307,6 +309,31 @@ const tools = [
       },
       required: ["path"]
     }
+  },
+  {
+    name: "ssh_run_multi",
+    title: "Run SSH Command on Multiple Hosts",
+    description: "Run a command on multiple SSH targets in parallel. Returns per-target results.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targets: {
+          type: "array",
+          items: { type: "string" },
+          description: "Profile names or user@host targets."
+        },
+        command: { type: "string", description: "Remote command or script." },
+        format: { type: "string", enum: ["text", "json"], description: "Output format. Default text." },
+        sudo: { type: "boolean", description: "Run via sudo -n on all targets." },
+        mode: { type: "string", enum: ["bash", "raw"], description: "bash or raw. Default bash." },
+        cwd: { type: "string", description: "Remote working directory." },
+        timeoutMs: { type: "number", description: "Per-target timeout ms." },
+        sshOptions: { type: "array", items: { type: "string" }, description: "Extra SSH args." },
+        identityFile: { type: "string", description: "SSH identity file." },
+        jumpHost: { type: "string", description: "SSH jump host (-J)." }
+      },
+      required: ["targets", "command"]
+    }
   }
 ];
 
@@ -413,6 +440,22 @@ async function callTool(name, args) {
     });
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_run_multi") {
+    const results = await runMultiSshCommand(args.targets, {
+      command: args.command,
+      sudo: args.sudo,
+      mode: args.mode,
+      cwd: args.cwd,
+      timeoutMs: args.timeoutMs,
+      sshOptions: args.sshOptions,
+      identityFile: args.identityFile,
+      jumpHost: args.jumpHost
+    });
+    const text = formatMultiRunResult(results, args.format || "text");
+    const hasError = results.some((r) => r.exitCode !== 0 || r.exitCode === null);
+    return textResult(text, hasError);
   }
 
   return textResult(`Unknown tool: ${name}`, true);

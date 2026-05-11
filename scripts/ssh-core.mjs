@@ -667,6 +667,55 @@ export function formatRunResult(result) {
   return lines.join("\n");
 }
 
+export async function runMultiSshCommand(targets, input = {}) {
+  const settled = await Promise.allSettled(
+    targets.map((target) => runSshCommand({ ...input, target }))
+  );
+  return settled.map((r, i) => {
+    if (r.status === "fulfilled") {
+      return r.value;
+    }
+    return {
+      target: targets[i],
+      targetLabel: targets[i],
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      durationMs: 0,
+      timedOut: false,
+      error: r.reason?.message || String(r.reason)
+    };
+  });
+}
+
+export function formatMultiRunResult(results, format = "text") {
+  if (format === "json") {
+    return JSON.stringify(
+      results.map((r) => ({
+        target: r.target,
+        targetLabel: r.targetLabel || r.target,
+        exitCode: r.exitCode ?? null,
+        stdout: r.stdout || "",
+        stderr: r.stderr || "",
+        durationMs: r.durationMs || 0,
+        timedOut: Boolean(r.timedOut),
+        error: r.error || null
+      })),
+      null,
+      2
+    );
+  }
+  return results
+    .map((r) => {
+      const header = `=== ${r.target} ===`;
+      if (r.error && r.exitCode === null) {
+        return `${header}\nerror: ${r.error}`;
+      }
+      return `${header}\n${formatRunResult(r)}`;
+    })
+    .join("\n\n");
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {
