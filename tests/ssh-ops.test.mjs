@@ -794,3 +794,82 @@ test("resolveIpGroup throws when group not found", async () => {
   const { resolveIpGroup } = await import(moduleUrl);
   assert.throws(() => resolveIpGroup("nonexistent-group"), /not found/i);
 });
+
+test("userManageScript list returns getent passwd script", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=user-list-${Date.now()}`;
+  const { userManageScript } = await import(moduleUrl);
+  const s = userManageScript({ action: "list" });
+  assert.ok(s.includes("getent passwd"), "should include getent passwd");
+  assert.ok(s.includes("getent group"), "should include getent group");
+});
+
+test("userManageScript add includes useradd and chpasswd", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=user-add-${Date.now()}`;
+  const { userManageScript } = await import(moduleUrl);
+  const s = userManageScript({ action: "add", username: "testuser", password: "secret", groups: ["sudo", "docker"] });
+  assert.ok(s.includes("useradd"), "should include useradd");
+  assert.ok(s.includes("chpasswd"), "should include chpasswd");
+  assert.ok(s.includes("usermod"), "should add to groups via usermod");
+  assert.ok(s.includes("testuser"), "should include username");
+});
+
+test("userManageScript del with removeHome includes -r flag", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=user-del-${Date.now()}`;
+  const { userManageScript } = await import(moduleUrl);
+  const s = userManageScript({ action: "del", username: "olduser", removeHome: true });
+  assert.ok(s.includes("userdel"), "should include userdel");
+  assert.ok(s.includes("-r"), "should include -r flag for home removal");
+});
+
+test("userManageScript throws when action missing", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=user-noact-${Date.now()}`;
+  const { userManageScript } = await import(moduleUrl);
+  assert.throws(() => userManageScript({}), /action is required/i);
+});
+
+test("userManageScript throws when username missing for non-list action", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=user-nouser-${Date.now()}`;
+  const { userManageScript } = await import(moduleUrl);
+  assert.throws(() => userManageScript({ action: "add" }), /username is required/i);
+});
+
+test("chmodScript includes chmod and chown", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=chmod-${Date.now()}`;
+  const { chmodScript } = await import(moduleUrl);
+  const s = chmodScript({ path: "/var/www", mode: "755", owner: "www-data", group: "www-data", recursive: true });
+  assert.ok(s.includes("chmod"), "should include chmod");
+  assert.ok(s.includes("chown"), "should include chown");
+  assert.ok(s.includes("-R"), "should include recursive flag");
+  assert.ok(s.includes("755"), "should include mode");
+  assert.ok(s.includes("www-data"), "should include owner/group");
+});
+
+test("chmodScript throws when path missing", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=chmod-nopath-${Date.now()}`;
+  const { chmodScript } = await import(moduleUrl);
+  assert.throws(() => chmodScript({ mode: "755" }), /path is required/i);
+});
+
+test("chmodScript throws when no mode/owner/group provided", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=chmod-nothing-${Date.now()}`;
+  const { chmodScript } = await import(moduleUrl);
+  assert.throws(() => chmodScript({ path: "/tmp/x" }), /mode.*owner.*group/i);
+});
+
+test("sudoRuleScript add includes visudo -c validation", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=sudo-add-${Date.now()}`;
+  const { sudoRuleScript } = await import(moduleUrl);
+  const s = sudoRuleScript({ action: "add", username: "deploy", commands: "/bin/systemctl", nopasswd: true });
+  assert.ok(s.includes("visudo -c"), "should validate with visudo -c");
+  assert.ok(s.includes("NOPASSWD"), "should include NOPASSWD");
+  assert.ok(s.includes("/bin/systemctl"), "should include command");
+  assert.ok(s.includes("sudoers.d"), "should write to sudoers.d");
+});
+
+test("sudoRuleScript list includes /etc/sudoers content", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=sudo-list-${Date.now()}`;
+  const { sudoRuleScript } = await import(moduleUrl);
+  const s = sudoRuleScript({ action: "list" });
+  assert.ok(s.includes("/etc/sudoers"), "should include sudoers path");
+  assert.ok(s.includes("sudoers.d"), "should include sudoers.d dir");
+});

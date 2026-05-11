@@ -27,6 +27,9 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_remove_jump`: remove a jump server and auto-remove from chain
 - `ssh_list_jumps`: show current jump chain, all jump servers, and commonUser
 - `ssh_list_keys`: list SSH private key files in `~/.ssh/` and home directory; call when auth fails or user needs to pick a key for a new profile
+- `ssh_user`: manage Linux users — add/del/mod/list/info/passwd/lock/unlock; handles groups, shell, home dir, system accounts; CONFIRM for add/del/mod/passwd
+- `ssh_chmod`: chmod + chown + chgrp in one call; mode/owner/group/recursive; CONFIRM before calling
+- `ssh_sudo_rule`: manage sudoers rules via /etc/sudoers.d/; validates with visudo -c; supports specific commands, NOPASSWD toggle; CONFIRM for add/remove
 - `ssh_ip_assign`: assign IPs to an interface permanently; accepts `ips` array, `group` name, or `fromFile` path to local JSON/YAML; auto-detects netplan/NetworkManager/network-scripts/systemd-networkd/rc.local; always runs sudo; CONFIRM before calling
 - `ssh_save_ip_group`: save a named set of IPs (with iface/gateway/dns) to dynamic config for reuse
 - `ssh_remove_ip_group`: remove a saved IP group

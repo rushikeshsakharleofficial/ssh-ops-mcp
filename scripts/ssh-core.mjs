@@ -1450,6 +1450,217 @@ fi
 `;
 }
 
+export function userManageScript({ action, username, password, groups, shell, homeDir, comment, system = false, createHome = true, removeHome = false } = {}) {
+  const VALID = ["add", "del", "mod", "list", "info", "passwd", "lock", "unlock"];
+  if (!action) throw new Error("action is required.");
+  if (!VALID.includes(action)) throw new Error(`action must be one of: ${VALID.join(", ")}`);
+  if (action !== "list" && !username) throw new Error("username is required for action: " + action);
+
+  const uQ = username ? shellQuote(username) : "";
+  const pwQ = password ? shellQuote(password) : "";
+
+  if (action === "list") {
+    return `set +e
+export LC_ALL=C
+echo "=== Local users (UID >= 1000 or system) ==="
+getent passwd | awk -F: '{printf "%-20s uid=%-6s gid=%-6s home=%-25s shell=%s\\n",$1,$3,$4,$6,$7}' | sort
+echo ""
+echo "=== Groups ==="
+getent group | awk -F: '{printf "%-20s gid=%-6s members=%s\\n",$1,$3,$4}' | sort
+`;
+  }
+
+  if (action === "info") {
+    return `set +e
+export LC_ALL=C
+echo "=== User: ${uQ} ==="
+id ${uQ} 2>/dev/null || { echo "User ${uQ} not found"; exit 1; }
+echo ""
+echo "=== Groups ==="
+groups ${uQ}
+echo ""
+echo "=== Account status ==="
+passwd -S ${uQ} 2>/dev/null || chage -l ${uQ} 2>/dev/null || echo "Status unavailable"
+echo ""
+echo "=== Home directory ==="
+eval UHOME=$(getent passwd ${uQ} | cut -d: -f6)
+ls -la "$UHOME" 2>/dev/null || echo "Home dir not accessible"
+echo ""
+echo "=== Last login ==="
+lastlog -u ${uQ} 2>/dev/null || last ${uQ} 2>/dev/null | head -5
+`;
+  }
+
+  if (action === "add") {
+    const groupsQ = groups && groups.length ? groups.map(shellQuote).join(",") : "";
+    const shellQ = shell ? shellQuote(shell) : "";
+    const homeQ = homeDir ? shellQuote(homeDir) : "";
+    const commentQ = comment ? shellQuote(comment) : "";
+    return `set +e
+export LC_ALL=C
+if id ${uQ} >/dev/null 2>&1; then
+  echo "User ${uQ} already exists"
+  id ${uQ}
+  exit 0
+fi
+useradd \
+  ${system ? "--system" : ""} \
+  ${createHome && !system ? "--create-home" : "--no-create-home"} \
+  ${shellQ ? `--shell ${shellQ}` : ""} \
+  ${homeQ ? `--home-dir ${homeQ}` : ""} \
+  ${commentQ ? `--comment ${commentQ}` : ""} \
+  ${uQ}
+_exit=$?
+if [ $_exit -ne 0 ]; then echo "useradd failed (exit $_exit)"; exit $_exit; fi
+${pwQ ? `echo ${uQ}:${pwQ} | chpasswd && echo "Password set"` : "echo 'No password set — account locked until password assigned'"}
+${groupsQ ? `usermod -aG ${groupsQ} ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
+echo "Created user:"
+id ${uQ}
+`;
+  }
+
+  if (action === "del") {
+    return `set +e
+export LC_ALL=C
+if ! id ${uQ} >/dev/null 2>&1; then
+  echo "User ${uQ} does not exist"
+  exit 1
+fi
+echo "Deleting user: ${uQ}"
+userdel ${removeHome ? "-r" : ""} ${uQ}
+_exit=$?
+[ $_exit -eq 0 ] && echo "User ${uQ} deleted${removeHome ? " (home removed)" : ""}" \
+  || echo "userdel failed (exit $_exit)"
+`;
+  }
+
+  if (action === "mod") {
+    const groupsQ = groups && groups.length ? groups.map(shellQuote).join(",") : "";
+    const shellQ = shell ? shellQuote(shell) : "";
+    const commentQ = comment ? shellQuote(comment) : "";
+    return `set +e
+export LC_ALL=C
+if ! id ${uQ} >/dev/null 2>&1; then echo "User ${uQ} not found"; exit 1; fi
+${shellQ ? `usermod --shell ${shellQ} ${uQ} && echo "Shell changed to ${shellQ}"` : ""}
+${groupsQ ? `usermod -aG ${groupsQ} ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
+${commentQ ? `usermod --comment ${commentQ} ${uQ} && echo "Comment updated"` : ""}
+echo "Updated user:"
+id ${uQ}
+`;
+  }
+
+  if (action === "passwd") {
+    if (!password) throw new Error("password is required for action: passwd");
+    return `set +e
+if ! id ${uQ} >/dev/null 2>&1; then echo "User ${uQ} not found"; exit 1; fi
+echo ${uQ}:${pwQ} | chpasswd && echo "Password updated for ${uQ}"
+`;
+  }
+
+  if (action === "lock") {
+    return `set +e
+if ! id ${uQ} >/dev/null 2>&1; then echo "User ${uQ} not found"; exit 1; fi
+usermod -L ${uQ} && echo "User ${uQ} locked"
+passwd -S ${uQ} 2>/dev/null || true
+`;
+  }
+
+  if (action === "unlock") {
+    return `set +e
+if ! id ${uQ} >/dev/null 2>&1; then echo "User ${uQ} not found"; exit 1; fi
+usermod -U ${uQ} && echo "User ${uQ} unlocked"
+passwd -S ${uQ} 2>/dev/null || true
+`;
+  }
+}
+
+export function chmodScript({ path: fpath, mode, owner, group, recursive = false } = {}) {
+  if (!fpath) throw new Error("path is required.");
+  if (!mode && !owner && !group) throw new Error("At least one of mode, owner, or group is required.");
+  const pathQ = shellQuote(fpath);
+  const R = recursive ? "-R" : "";
+  return `set +e
+export LC_ALL=C
+if [ ! -e ${pathQ} ]; then echo "Path not found: ${pathQ}"; exit 1; fi
+echo "=== Before ==="
+ls -la ${pathQ} 2>/dev/null || ls -lad ${pathQ}
+${mode ? `chmod ${R} ${shellQuote(String(mode))} ${pathQ} && echo "chmod ${mode}: OK"` : ""}
+${owner && group ? `chown ${R} ${shellQuote(owner + ":" + group)} ${pathQ} && echo "chown ${owner}:${group}: OK"` : owner ? `chown ${R} ${shellQuote(owner)} ${pathQ} && echo "chown ${owner}: OK"` : group ? `chgrp ${R} ${shellQuote(group)} ${pathQ} && echo "chgrp ${group}: OK"` : ""}
+echo "=== After ==="
+ls -la ${pathQ} 2>/dev/null || ls -lad ${pathQ}
+`;
+}
+
+export function sudoRuleScript({ action, username, commands = "ALL", runas = "ALL:ALL", nopasswd = true, ruleFile } = {}) {
+  const VALID = ["list", "add", "remove"];
+  if (!action) throw new Error("action is required.");
+  if (!VALID.includes(action)) throw new Error(`action must be one of: ${VALID.join(", ")}`);
+  if (action !== "list" && !username) throw new Error("username is required.");
+
+  const uQ = username ? shellQuote(username) : "";
+  const fileQ = ruleFile ? shellQuote(ruleFile) : shellQuote(`/etc/sudoers.d/${username || "ssh-ops"}`);
+
+  if (action === "list") {
+    return `set +e
+export LC_ALL=C
+echo "=== /etc/sudoers (main) ==="
+grep -v '^#' /etc/sudoers 2>/dev/null | grep -v '^$' || echo "(empty or no access)"
+echo ""
+echo "=== /etc/sudoers.d/ ==="
+for f in /etc/sudoers.d/*; do
+  [ -f "$f" ] || continue
+  printf "\\n--- %s ---\\n" "$f"
+  cat "$f"
+done
+`;
+  }
+
+  if (action === "add") {
+    const cmdQ = shellQuote(commands);
+    const runasQ = shellQuote(runas);
+    const nopasswdStr = nopasswd ? "NOPASSWD: " : "";
+    return `set +e
+export LC_ALL=C
+RULE="${uQ} ALL=(${runas}) ${nopasswdStr}${commands}"
+echo "Adding sudoers rule: $RULE"
+echo "$RULE" > ${fileQ}
+chmod 0440 ${fileQ}
+# Validate with visudo -c before accepting
+if visudo -c -f ${fileQ} 2>&1; then
+  echo "Rule validated and saved: ${fileQ}"
+  echo ""
+  echo "=== Active rule ==="
+  cat ${fileQ}
+else
+  echo "Invalid sudoers rule — removing to prevent lockout"
+  rm -f ${fileQ}
+  exit 1
+fi
+`;
+  }
+
+  if (action === "remove") {
+    return `set +e
+export LC_ALL=C
+if [ ! -f ${fileQ} ]; then
+  # Also try searching by username in all sudoers.d files
+  _found=$(grep -rl "^${uQ} " /etc/sudoers.d/ 2>/dev/null | head -1)
+  if [ -n "$_found" ]; then
+    echo "Found rule in: $_found"
+    rm -f "$_found" && echo "Removed: $_found"
+  else
+    echo "No sudoers rule found for ${uQ}"
+    exit 1
+  fi
+else
+  rm -f ${fileQ} && echo "Removed: ${fileQ}"
+fi
+echo "Remaining rules for ${uQ}:"
+grep -rl "^${uQ} " /etc/sudoers.d/ 2>/dev/null || echo "(none)"
+`;
+  }
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {

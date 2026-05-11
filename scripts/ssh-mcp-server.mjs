@@ -2,8 +2,11 @@
 import {
   addJumpServer,
   addProfile,
+  chmodScript,
   cronScript,
   ipAssignScript,
+  sudoRuleScript,
+  userManageScript,
   listIpGroups,
   listLocalSshKeys,
   parseYamlConfig,
@@ -553,6 +556,73 @@ const tools = [
       type: "object",
       properties: {}
     }
+  },
+  {
+    name: "ssh_user",
+    title: "SSH User Management",
+    description: "Manage Linux users on a remote host — add, delete, modify, list, show info, change password, lock, or unlock. CONFIRM before add/del/mod/passwd unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["add", "del", "mod", "list", "info", "passwd", "lock", "unlock"],
+          description: "User action."
+        },
+        username: { type: "string", description: "Target username. Required for all actions except list." },
+        password: { type: "string", description: "Password (plain text, set via chpasswd). Required for passwd action." },
+        groups: { type: "array", items: { type: "string" }, description: "Groups to add the user to (appended, not replaced)." },
+        shell: { type: "string", description: "Login shell, e.g. /bin/bash." },
+        homeDir: { type: "string", description: "Custom home directory path." },
+        comment: { type: "string", description: "GECOS comment field (full name etc.)." },
+        system: { type: "boolean", description: "Create as system user (no home, UID < 1000)." },
+        createHome: { type: "boolean", description: "Create home directory on add (default true)." },
+        removeHome: { type: "boolean", description: "Remove home directory and mail spool on del (default false)." },
+        sudo: { type: "boolean", description: "Run via sudo. Default true for this tool." }
+      },
+      required: ["action"]
+    }
+  },
+  {
+    name: "ssh_chmod",
+    title: "SSH Permissions",
+    description: "Change file/directory permissions (chmod), owner (chown), or group (chgrp) on a remote host. Provide mode for chmod, owner for chown, group for chgrp — any combination. CONFIRM before calling unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        path: { type: "string", description: "Absolute remote path (required)." },
+        mode: { type: "string", description: "Permission mode, e.g. 755, 644, u+x, g-w." },
+        owner: { type: "string", description: "Owner username to set." },
+        group: { type: "string", description: "Group name to set." },
+        recursive: { type: "boolean", description: "Apply recursively (-R). Default false." },
+        sudo: { type: "boolean", description: "Run via sudo. Default false." }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "ssh_sudo_rule",
+    title: "SSH Sudoers Management",
+    description: "Add, remove, or list sudoers rules on a remote host. Writes to /etc/sudoers.d/ and validates with visudo -c before accepting. CONFIRM before add/remove unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["list", "add", "remove"],
+          description: "Sudoers action."
+        },
+        username: { type: "string", description: "Username to grant/revoke sudo access. Required for add/remove." },
+        commands: { type: "string", description: "Allowed commands. Default ALL." },
+        runas: { type: "string", description: "Run-as spec. Default ALL:ALL." },
+        nopasswd: { type: "boolean", description: "Add NOPASSWD flag (no password prompt). Default true." },
+        ruleFile: { type: "string", description: "Custom sudoers.d file path. Default /etc/sudoers.d/<username>." }
+      },
+      required: ["action"]
+    }
   }
 ];
 
@@ -826,6 +896,63 @@ async function callTool(name, args) {
 
   if (name === "ssh_list_ip_groups") {
     return textResult(JSON.stringify(listIpGroups(), null, 2));
+  }
+
+  if (name === "ssh_user") {
+    const command = userManageScript({
+      action: args.action,
+      username: args.username,
+      password: args.password,
+      groups: args.groups,
+      shell: args.shell,
+      homeDir: args.homeDir,
+      comment: args.comment,
+      system: Boolean(args.system),
+      createHome: args.createHome !== false,
+      removeHome: Boolean(args.removeHome)
+    });
+    const result = await runSshCommand({
+      ...args,
+      command,
+      mode: "bash",
+      sudo: args.sudo !== false
+    });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_chmod") {
+    const command = chmodScript({
+      path: args.path,
+      mode: args.mode,
+      owner: args.owner,
+      group: args.group,
+      recursive: Boolean(args.recursive)
+    });
+    const result = await runSshCommand({
+      ...args,
+      command,
+      mode: "bash",
+      sudo: Boolean(args.sudo)
+    });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_sudo_rule") {
+    const command = sudoRuleScript({
+      action: args.action,
+      username: args.username,
+      commands: args.commands || "ALL",
+      runas: args.runas || "ALL:ALL",
+      nopasswd: args.nopasswd !== false,
+      ruleFile: args.ruleFile
+    });
+    const result = await runSshCommand({
+      ...args,
+      command,
+      mode: "bash",
+      sudo: true
+    });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   return textResult(`Unknown tool: ${name}`, true);
