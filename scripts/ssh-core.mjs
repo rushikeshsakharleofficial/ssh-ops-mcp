@@ -529,6 +529,11 @@ command -v docker >/dev/null 2>&1 && sudo -n docker ps --format 'table {{.Names}
 `;
 }
 
+export function fileReadScript(path, maxBytes = 51200) {
+  const safeMax = Math.max(1, Number(maxBytes) || 51200);
+  return `set +e\nhead -c ${safeMax} ${shellQuote(String(path))}\n`;
+}
+
 export function formatRunResult(result) {
   const lines = [];
   lines.push(`target: ${result.targetLabel || result.target}`);

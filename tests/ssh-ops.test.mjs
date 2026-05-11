@@ -225,3 +225,18 @@ test("fileWriteScript uses SSH_OPS_WRITE delimiter prefix in heredoc", async () 
   assert.ok(script.includes("SSH_OPS_WRITE"), "heredoc delimiter should use SSH_OPS_WRITE prefix");
   assert.ok(!script.includes("SSH_OPS_REMOTE_SCRIPT"), "should not use remote script prefix");
 });
+
+test("fileReadScript includes head command with quoted path and byte cap", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-read-${Date.now()}`;
+  const { fileReadScript } = await import(moduleUrl);
+  const script = fileReadScript("/etc/nginx/nginx.conf", 1024);
+  assert.ok(script.includes("head -c 1024"), "should contain head -c with byte cap");
+  assert.ok(script.includes("'/etc/nginx/nginx.conf'"), "should contain shell-quoted path");
+});
+
+test("fileReadScript defaults to 51200 bytes", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-read-default-${Date.now()}`;
+  const { fileReadScript } = await import(moduleUrl);
+  const script = fileReadScript("/var/log/syslog");
+  assert.ok(script.includes("head -c 51200"), "should use default 51200 bytes");
+});
