@@ -159,6 +159,15 @@ ssh_ip_assign(target="prod", fromFile="./configs/prod-ips.yaml")
 
 Inline `ips`/`iface`/`gateway`/`dns` params always override group or file values.
 
+After persisting, automatically runs **IP verification** for each assigned address:
+
+| IP type | Checks performed |
+|---------|-----------------|
+| Private (`10.x`, `192.168.x`, `172.16-31.x`) | IP on interface · gateway ping via interface · self ping |
+| Public (all others) | IP on interface · `ping -I $IP 8.8.8.8` · `curl --interface $IP ipify.org` to confirm outbound traffic leaves via the correct IP |
+
+Output ends with `Verification: ALL PASSED` or `Verification: SOME CHECKS FAILED`. The `curl` check catches misconfigured routing where the IP is assigned but traffic still exits via the default route.
+
 Auto-detects persistence method in priority order:
 
 | Method | Triggered when | Writes to |
@@ -290,7 +299,7 @@ CLI options:
 - **Password auth** — profiles with a password use `sshpass -e` with the decrypted password injected via the `SSHPASS` env var. Password never appears in process args. Requires `sshpass` installed locally.
 - **Encryption** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device key generated at install time (`~/.ssh-ops/.encryption-key`, 0600). Passwords from one machine cannot be decrypted on another.
 - **Auth failure tracking** — SSH exit 255 with auth-failure stderr patterns marks the profile `_authFailed: true` in the dynamic config. Updating credentials clears the flag automatically.
-- **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately then auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) to persist across reboots. Accepts inline `ips` array, a saved `group` name, or a `fromFile` path to a local JSON/YAML file. `network-scripts` mode creates `ifcfg-eth0:N` alias files and skips IPs already persisted (idempotent).
+- **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately, persists via auto-detected network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local), then runs automatic verification: private IPs get gateway + self ping; public IPs get `ping -I $IP 8.8.8.8` + `curl --interface $IP` to confirm outbound traffic exits via the correct source IP. Accepts inline `ips`, a saved `group` name, or a `fromFile` path. `network-scripts` creates `ifcfg-eth0:N` aliases and skips already-persisted IPs.
 - **IP groups** — `ssh_save_ip_group` stores named IP sets (with iface, gateway, dns) in `ssh-ops.dynamic.json`. Reference by name in `ssh_ip_assign(group="name")` to apply the same set to multiple servers without repeating the IP list.
 - **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
