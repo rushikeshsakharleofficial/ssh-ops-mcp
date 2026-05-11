@@ -24,15 +24,25 @@ Installs to `%LOCALAPPDATA%\ssh-ops-mcp`.
 
 ---
 
-Each installer:
-- Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
-- Auto-installs the `claude` CLI if missing (`npm install -g @anthropic-ai/claude-code`)
-- Downloads only the required script files to `~/.ssh-ops/` — no git clone, no repo bloat
-- Registers the MCP server with Claude Code
-- Symlinks/junctions into the Codex plugins directory if Codex is detected
-- Creates a starter `ssh-ops.config.yaml`
+Each installer auto-detects which tools are installed and registers the MCP server with all of them:
 
-Restart Claude Code or Codex after running.
+| Tool | Config |
+|------|--------|
+| Claude Code | `claude mcp add` CLI |
+| Codex | symlink in `~/.codex/plugins/` |
+| Cursor | `~/.cursor/mcp.json` |
+| VS Code Copilot | `settings.json` → `mcp.servers` |
+| Gemini CLI | `~/.gemini/settings.json` |
+| Antigravity IDE | `~/.gemini/antigravity/mcp_config.json` |
+
+Also:
+- Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
+- Auto-installs `claude` CLI if missing
+- Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
+- Schedules a **weekly auto-update** (cron on macOS/Linux, Scheduled Task on Windows)
+- Re-running updates all files; your `ssh-ops.config.yaml` is preserved
+
+Restart your IDE or CLI session after running.
 
 **Custom install location:**
 ```bash
