@@ -468,3 +468,76 @@ test("formatMultiRunResult json includes exitCode null and error string for reje
   assert.equal(parsed[0].exitCode, null);
   assert.equal(parsed[0].error, "no host");
 });
+
+test("networkCheckScript with ping and port includes ping and /dev/tcp", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=net-check-${Date.now()}`;
+  const { networkCheckScript } = await import(moduleUrl);
+  const script = networkCheckScript({ host: "db.internal", port: 5432, ping: true });
+  assert.ok(script.includes("ping"), "should include ping command");
+  assert.ok(script.includes("/dev/tcp"), "should include /dev/tcp port check");
+  assert.ok(script.includes("db.internal"), "should include host");
+  assert.ok(script.includes("5432"), "should include port");
+});
+
+test("networkCheckScript throws when tls: true and no port", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=net-tls-noport-${Date.now()}`;
+  const { networkCheckScript } = await import(moduleUrl);
+  assert.throws(
+    () => networkCheckScript({ host: "example.com", tls: true }),
+    /port is required when tls: true/
+  );
+});
+
+test("packageScript list includes auto-detect block for all managers", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=pkg-detect-${Date.now()}`;
+  const { packageScript } = await import(moduleUrl);
+  const script = packageScript({ action: "list" });
+  assert.ok(script.includes("apt-get"), "should check for apt-get");
+  assert.ok(script.includes("dnf"), "should check for dnf");
+  assert.ok(script.includes("yum"), "should check for yum");
+  assert.ok(script.includes("apk"), "should check for apk");
+});
+
+test("packageScript install throws when packages empty", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=pkg-nopkg-${Date.now()}`;
+  const { packageScript } = await import(moduleUrl);
+  assert.throws(
+    () => packageScript({ action: "install", packages: [] }),
+    /packages is required for install/
+  );
+});
+
+test("packageScript install includes package names in script", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=pkg-install-${Date.now()}`;
+  const { packageScript } = await import(moduleUrl);
+  const script = packageScript({ action: "install", packages: ["nginx", "curl"] });
+  assert.ok(script.includes("install"), "should contain install keyword");
+  assert.ok(script.includes("nginx"), "should contain nginx");
+  assert.ok(script.includes("curl"), "should contain curl");
+});
+
+test("cronScript list produces crontab -l command", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=cron-list-${Date.now()}`;
+  const { cronScript } = await import(moduleUrl);
+  const script = cronScript({ action: "list" });
+  assert.ok(script.includes("crontab"), "should use crontab");
+  assert.ok(script.includes("-l"), "should list crontab");
+});
+
+test("cronScript add includes schedule and command in heredoc", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=cron-add-${Date.now()}`;
+  const { cronScript } = await import(moduleUrl);
+  const script = cronScript({ action: "add", schedule: "0 * * * *", command: "/usr/bin/backup.sh" });
+  assert.ok(script.includes("0 * * * *"), "should include schedule");
+  assert.ok(script.includes("/usr/bin/backup.sh"), "should include command");
+  assert.ok(script.includes("crontab -"), "should pipe to crontab");
+});
+
+test("cronScript add throws when schedule missing", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=cron-add-nosched-${Date.now()}`;
+  const { cronScript } = await import(moduleUrl);
+  assert.throws(
+    () => cronScript({ action: "add", command: "/bin/backup.sh" }),
+    /schedule is required for add/
+  );
+});

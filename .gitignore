@@ -1,6 +1,8 @@
 ssh-ops.config.yaml
 ssh-ops.config.yml
 ssh-ops.config.json
+CLAUDE.md
+docs/
 .code-outline-graph/
 .claude/settings.local.json
 .cursor/

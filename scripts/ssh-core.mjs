@@ -716,6 +716,157 @@ export function formatMultiRunResult(results, format = "text") {
     .join("\n\n");
 }
 
+export function networkCheckScript({ host, port, ping = true, tls = false } = {}) {
+  if (!host) throw new Error("host is required.");
+  if (tls && !port) throw new Error("port is required when tls: true.");
+
+  const parts = [
+    "set +e",
+    "export LC_ALL=C",
+    `_h=${shellQuote(String(host))}`
+  ];
+
+  if (ping) {
+    parts.push(`printf '\\n===== Ping =====\\n'`);
+    parts.push(`ping -c3 -W2 "$_h" 2>&1`);
+  }
+
+  if (port) {
+    const safePort = Math.floor(Number(port));
+    parts.push(`_p=${safePort}`);
+    parts.push(`printf '\\n===== Port %s =====\\n' "$_p"`);
+    parts.push(`(echo > /dev/tcp/"$_h"/"$_p") 2>&1 && echo "open" || echo "closed/refused"`);
+  }
+
+  if (tls && port) {
+    parts.push(`printf '\\n===== TLS =====\\n'`);
+    parts.push(`echo | openssl s_client -connect "$_h:$_p" -servername "$_h" 2>&1 | grep -E "Verify|notAfter|subject|issuer|error"`);
+  }
+
+  return parts.join("\n") + "\n";
+}
+
+export function packageScript({ action, packages = [], sudo = true } = {}) {
+  const validActions = ["list", "search", "install", "remove", "update", "upgrade"];
+  if (!validActions.includes(action)) {
+    throw new Error(`Invalid action: ${action}. Must be one of: ${validActions.join(", ")}`);
+  }
+  if (["install", "remove", "search"].includes(action) && packages.length === 0) {
+    throw new Error(`packages is required for ${action}.`);
+  }
+
+  const s = sudo ? "sudo -n " : "";
+  const pkgs = packages.map((p) => shellQuote(String(p))).join(" ");
+
+  const detect = [
+    `if command -v apt-get >/dev/null 2>&1; then _pm=apt`,
+    `elif command -v dnf >/dev/null 2>&1; then _pm=dnf`,
+    `elif command -v yum >/dev/null 2>&1; then _pm=yum`,
+    `elif command -v apk >/dev/null 2>&1; then _pm=apk`,
+    `else echo "No supported package manager found (apt/dnf/yum/apk)"; exit 1`,
+    `fi`
+  ];
+
+  const dispatch = {
+    list: [
+      `case "$_pm" in`,
+      `  apt) ${s}dpkg -l ;;`,
+      `  dnf|yum) ${s}rpm -qa ;;`,
+      `  apk) ${s}apk list --installed ;;`,
+      `esac`
+    ],
+    search: [
+      `case "$_pm" in`,
+      `  apt) apt-cache search ${pkgs} ;;`,
+      `  dnf) dnf search ${pkgs} ;;`,
+      `  yum) yum search ${pkgs} ;;`,
+      `  apk) apk search ${pkgs} ;;`,
+      `esac`
+    ],
+    install: [
+      `case "$_pm" in`,
+      `  apt) ${s}apt-get install -y ${pkgs} ;;`,
+      `  dnf) ${s}dnf install -y ${pkgs} ;;`,
+      `  yum) ${s}yum install -y ${pkgs} ;;`,
+      `  apk) ${s}apk add ${pkgs} ;;`,
+      `esac`
+    ],
+    remove: [
+      `case "$_pm" in`,
+      `  apt) ${s}apt-get remove -y ${pkgs} ;;`,
+      `  dnf) ${s}dnf remove -y ${pkgs} ;;`,
+      `  yum) ${s}yum remove -y ${pkgs} ;;`,
+      `  apk) ${s}apk del ${pkgs} ;;`,
+      `esac`
+    ],
+    update: packages.length > 0
+      ? [
+          `case "$_pm" in`,
+          `  apt) ${s}apt-get install --only-upgrade -y ${pkgs} ;;`,
+          `  dnf) ${s}dnf update -y ${pkgs} ;;`,
+          `  yum) ${s}yum update -y ${pkgs} ;;`,
+          `  apk) ${s}apk upgrade ${pkgs} ;;`,
+          `esac`
+        ]
+      : [
+          `case "$_pm" in`,
+          `  apt) ${s}apt-get update && ${s}apt-get upgrade -y ;;`,
+          `  dnf) ${s}dnf update -y ;;`,
+          `  yum) ${s}yum update -y ;;`,
+          `  apk) ${s}apk update && ${s}apk upgrade ;;`,
+          `esac`
+        ],
+    upgrade: [
+      `case "$_pm" in`,
+      `  apt) ${s}apt-get dist-upgrade -y ;;`,
+      `  dnf) ${s}dnf distro-sync -y ;;`,
+      `  yum) ${s}yum distro-sync -y 2>/dev/null || ${s}yum upgrade -y ;;`,
+      `  apk) ${s}apk upgrade --available ;;`,
+      `esac`
+    ]
+  };
+
+  return ["set +e", "export LC_ALL=C", ...detect, ...dispatch[action]].join("\n") + "\n";
+}
+
+export function cronScript({ action, user, schedule, command: cronCommand } = {}) {
+  const validActions = ["list", "add", "remove"];
+  if (!validActions.includes(action)) {
+    throw new Error(`Invalid action: ${action}. Must be one of: ${validActions.join(", ")}`);
+  }
+  if (action === "add") {
+    if (!schedule) throw new Error("schedule is required for add.");
+    if (!cronCommand) throw new Error("command is required for add.");
+    if (!/^(\S+\s+){4}\S+$/.test(schedule.trim())) {
+      throw new Error("schedule must have 5 space-separated fields (e.g. '0 * * * *').");
+    }
+  }
+  if (action === "remove" && !cronCommand) {
+    throw new Error("command is required for remove.");
+  }
+
+  const ct = user
+    ? `sudo -n crontab -u ${shellQuote(String(user))}`
+    : "crontab";
+
+  const parts = ["set +e"];
+
+  if (action === "list") {
+    parts.push(`${ct} -l 2>&1`);
+  } else if (action === "add") {
+    const entry = `${schedule} ${cronCommand}`;
+    const delimiter = uniqueHeredocDelimiter(entry, "SSH_OPS_CRON");
+    parts.push(`( ${ct} -l 2>/dev/null; cat <<'${delimiter}'`);
+    parts.push(entry);
+    parts.push(`${delimiter}`);
+    parts.push(`) | ${ct} -`);
+  } else {
+    parts.push(`${ct} -l 2>/dev/null | grep -v -F ${shellQuote(String(cronCommand))} | ${ct} -`);
+  }
+
+  return parts.join("\n") + "\n";
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {
