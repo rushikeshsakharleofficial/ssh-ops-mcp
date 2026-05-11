@@ -158,12 +158,42 @@ Use the `ssh-ops` skill when the user wants to connect to remote SSH servers, ru
     Compress-Archive -Path "$tmpSkillDir\ssh-ops" -DestinationPath $skillZip -Force
     Remove-Item $tmpSkillDir -Recurse -Force
 
-    # Register in installed_plugins.json
-    if (Test-Path $InstalledJson) {
-        $env:INSTALLED_JSON  = $InstalledJson
-        $env:PLUGIN_CACHE    = $PluginCache
-        $env:PLUGIN_VERSION  = (Get-Content "$Dir\VERSION" -Raw -ErrorAction SilentlyContinue).Trim().TrimStart('v')
+    # Step A — Create marketplace directory
+    $MarketplaceDir = Join-Path $env:USERPROFILE ".claude\plugins\marketplaces\rushikeshsakharleofficial"
+    New-Item -ItemType Directory -Path $MarketplaceDir -Force | Out-Null
+    # Copy plugin files to marketplace
+    Copy-Item -Path "$Dir\*" -Destination $MarketplaceDir -Recurse -Force
+
+    # Step B — Register in known_marketplaces.json
+    $KnownMkt = Join-Path $env:USERPROFILE ".claude\plugins\known_marketplaces.json"
+    if (Test-Path $KnownMkt) {
         node -e @"
+    const fs = require('fs');
+    const f = '$($KnownMkt -replace '\\','\\\\')';
+    let d = {};
+    try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+    d['rushikeshsakharleofficial'] = {
+      source: { source: 'github', repo: 'rushikeshsakharleofficial/ssh-ops-mcp' },
+      installLocation: '$($MarketplaceDir -replace '\\','\\\\')'.replace(/\\\\/g,'\\\\'),
+      lastUpdated: new Date().toISOString()
+    };
+    fs.writeFileSync(f, JSON.stringify(d, null, 2));
+"@
+    }
+
+    # Step C — Use claude plugins install if available, else fall back to installed_plugins.json
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if ($claudeCmd) {
+        $result = & claude plugins install "ssh-ops@rushikeshsakharleofficial" --scope user 2>&1
+        if ($LASTEXITCODE -eq 0) { Ok "Registered skill plugin (Claude Code + Gemini)" }
+        else { Ok "Files copied (run: claude plugins install ssh-ops@rushikeshsakharleofficial)" }
+    } else {
+        # Register in installed_plugins.json
+        if (Test-Path $InstalledJson) {
+            $env:INSTALLED_JSON  = $InstalledJson
+            $env:PLUGIN_CACHE    = $PluginCache
+            $env:PLUGIN_VERSION  = (Get-Content "$Dir\VERSION" -Raw -ErrorAction SilentlyContinue).Trim().TrimStart('v')
+            node -e @"
 const fs = require('fs');
 const f = process.env.INSTALLED_JSON;
 let d = {};
@@ -182,11 +212,12 @@ const entry = {
 d.plugins[key] = [entry];
 fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
 "@ 2>&1 | Out-Null
-        Remove-Item Env:\INSTALLED_JSON, Env:\PLUGIN_CACHE, Env:\PLUGIN_VERSION -ErrorAction SilentlyContinue
-        Ok "Registered skill plugin (Claude Code)"
-    } else {
-        Ok "Skill files installed at $PluginCache"
-        Info "Restart Claude Code to activate the ssh-ops skill"
+            Remove-Item Env:\INSTALLED_JSON, Env:\PLUGIN_CACHE, Env:\PLUGIN_VERSION -ErrorAction SilentlyContinue
+            Ok "Registered skill plugin (Claude Code)"
+        } else {
+            Ok "Skill files installed at $PluginCache"
+            Info "Restart Claude Code to activate the ssh-ops skill"
+        }
     }
 } else { Skip "~\.claude not found — skipping skill plugin" }
 

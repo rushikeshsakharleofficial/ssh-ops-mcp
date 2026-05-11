@@ -255,30 +255,59 @@ CLAUDEMD
     " 2>/dev/null
   fi
 
-  # Register in installed_plugins.json
-  if [ -f "$INSTALLED_JSON" ]; then
+  # Step A — Create marketplace directory and copy plugin files
+  _MARKETPLACE_DIR="$HOME/.claude/plugins/marketplaces/rushikeshsakharleofficial"
+  mkdir -p "$_MARKETPLACE_DIR"
+  cp -r "$DIR/." "$_MARKETPLACE_DIR/"
+
+  # Step B — Register marketplace in known_marketplaces.json
+  _KNOWN_MKT="$HOME/.claude/plugins/known_marketplaces.json"
+  if [ -f "$_KNOWN_MKT" ]; then
     node -e "
       const fs = require('fs');
-      const f = '$INSTALLED_JSON';
+      const f = '$_KNOWN_MKT';
       let d = {};
       try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
-      d.version = d.version || 2;
-      d.plugins = d.plugins || {};
-      const key = 'ssh-ops@rushikeshsakharleofficial';
-      const entry = {
-        scope: 'user',
-        installPath: '$PLUGIN_CACHE',
-        version: '$(cat "$DIR/VERSION" 2>/dev/null | sed "s/^v//" || echo 1.0.0)',
-        installedAt: d.plugins[key]?.[0]?.installedAt || new Date().toISOString(),
+      d['rushikeshsakharleofficial'] = {
+        source: { source: 'github', repo: 'rushikeshsakharleofficial/ssh-ops-mcp' },
+        installLocation: '$_MARKETPLACE_DIR',
         lastUpdated: new Date().toISOString()
       };
-      d.plugins[key] = [entry];
-      fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
-    " 2>/dev/null && ok "Registered skill plugin (Claude Code + Gemini)" \
-      || warn "Could not update installed_plugins.json — restart Claude to load skill"
+      fs.writeFileSync(f, JSON.stringify(d, null, 2));
+    " 2>/dev/null
+  fi
+
+  # Step C — Use claude plugins install if available, else fall back to manual JSON update
+  if has claude; then
+    claude plugins install "ssh-ops@rushikeshsakharleofficial" --scope user 2>/dev/null && \
+      ok "Registered skill plugin (Claude Code + Gemini)" || \
+      ok "Files copied (run: claude plugins install ssh-ops@rushikeshsakharleofficial)"
   else
-    ok "Skill files installed at $PLUGIN_CACHE"
-    info "Restart Claude Code to activate the ssh-ops skill"
+    # fallback: manual installed_plugins.json update
+    if [ -f "$INSTALLED_JSON" ]; then
+      node -e "
+        const fs = require('fs');
+        const f = '$INSTALLED_JSON';
+        let d = {};
+        try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+        d.version = d.version || 2;
+        d.plugins = d.plugins || {};
+        const key = 'ssh-ops@rushikeshsakharleofficial';
+        const entry = {
+          scope: 'user',
+          installPath: '$PLUGIN_CACHE',
+          version: '$(cat "$DIR/VERSION" 2>/dev/null | sed "s/^v//" || echo 1.0.0)',
+          installedAt: d.plugins[key]?.[0]?.installedAt || new Date().toISOString(),
+          lastUpdated: new Date().toISOString()
+        };
+        d.plugins[key] = [entry];
+        fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+      " 2>/dev/null && ok "Registered skill plugin (Claude Code + Gemini)" \
+        || warn "Could not update installed_plugins.json — restart Claude to load skill"
+    else
+      ok "Skill files installed at $PLUGIN_CACHE"
+      info "Restart Claude Code to activate the ssh-ops skill"
+    fi
   fi
 else
   skip "~/.claude not found — skipping skill plugin"
