@@ -25,6 +25,12 @@ const HOME_CONFIG_FILES = [
 
 const DYNAMIC_CONFIG = join(PLUGIN_ROOT, "ssh-ops.dynamic.json");
 const ENCRYPTION_KEY_FILE = join(PLUGIN_ROOT, ".encryption-key");
+
+try {
+  if ((statSync(DYNAMIC_CONFIG).mode & 0o777) !== 0o600) {
+    chmodSync(DYNAMIC_CONFIG, 0o600);
+  }
+} catch {}
 const ENC_ALGO = "aes-256-gcm";
 
 function getOrCreateEncryptionKey() {
@@ -75,6 +81,7 @@ function markProfileAuthFailed(profileName) {
   if (!dynamic.profiles?.[profileName]) return;
   dynamic.profiles[profileName]._authFailed = true;
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   _configCache = null;
   _configCacheTime = 0;
 }
@@ -308,6 +315,7 @@ export function addProfile(name, profile) {
   dynamic.profiles[name] = entry;
   clearProfileAuthFailed(dynamic, name);
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   _configCache = null;
   _configCacheTime = 0;
   return listProfiles();
@@ -324,6 +332,7 @@ export function removeProfile(name) {
   }
   delete dynamic.profiles[name];
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   _configCache = null;
   _configCacheTime = 0;
   return listProfiles();
@@ -386,6 +395,7 @@ export function addJumpServer(name, server, { appendToChain = true, commonUser }
     dynamic.defaults.commonUser = commonUser;
   }
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   _configCache = null;
   _configCacheTime = 0;
   return listJumpServers();
@@ -406,6 +416,7 @@ export function removeJumpServer(name) {
     if (dynamic.defaults.jumpChain.length === 0) delete dynamic.defaults.jumpChain;
   }
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   _configCache = null;
   _configCacheTime = 0;
   return listJumpServers();
@@ -431,6 +442,7 @@ export function saveIpGroup(name, { iface, ips, gateway, dns } = {}) {
     ...(Array.isArray(dns) && dns.length && { dns })
   };
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   return listIpGroups();
 }
 
@@ -442,6 +454,7 @@ export function removeIpGroup(name) {
   delete dynamic.ipGroups[name];
   if (Object.keys(dynamic.ipGroups).length === 0) delete dynamic.ipGroups;
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  chmodSync(DYNAMIC_CONFIG, 0o600);
   return listIpGroups();
 }
 
@@ -1683,6 +1696,8 @@ function runProcess(command, args, options = {}) {
     const maxOutputBytes = options.maxOutputBytes || DEFAULT_MAX_OUTPUT_BYTES;
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutTotalBytes = 0;
+    let stderrTotalBytes = 0;
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -1690,6 +1705,7 @@ function runProcess(command, args, options = {}) {
     }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk) => {
+      stdoutTotalBytes += chunk.length;
       if (stdoutTruncated) return;
       if (stdoutBytes + chunk.length <= maxOutputBytes) {
         stdout += chunk.toString("utf8");
@@ -1700,6 +1716,7 @@ function runProcess(command, args, options = {}) {
     });
 
     child.stderr.on("data", (chunk) => {
+      stderrTotalBytes += chunk.length;
       if (stderrTruncated) return;
       if (stderrBytes + chunk.length <= maxOutputBytes) {
         stderr += chunk.toString("utf8");
@@ -1723,6 +1740,12 @@ function runProcess(command, args, options = {}) {
 
     child.on("close", (exitCode, signal) => {
       clearTimeout(timer);
+      if (stdoutTruncated) {
+        stdout += `\n[OUTPUT TRUNCATED: received ${stdoutTotalBytes} bytes, limit ${maxOutputBytes} bytes — ${stdoutTotalBytes - maxOutputBytes} bytes dropped]`;
+      }
+      if (stderrTruncated) {
+        stderr += `\n[OUTPUT TRUNCATED: received ${stderrTotalBytes} bytes, limit ${maxOutputBytes} bytes — ${stderrTotalBytes - maxOutputBytes} bytes dropped]`;
+      }
       resolveResult({
         exitCode: timedOut ? 124 : exitCode,
         signal,

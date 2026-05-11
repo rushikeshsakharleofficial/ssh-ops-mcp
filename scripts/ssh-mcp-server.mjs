@@ -38,6 +38,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
+const SERVER_VERSION = (() => {
+  try {
+    return readFileSync(join(PLUGIN_ROOT, "..", "VERSION"), "utf8").trim().replace(/^v/, "");
+  } catch {
+    return "1.14.1";
+  }
+})();
 const RELEASES_API = "https://api.github.com/repos/rushikeshsakharleofficial/ssh-ops-mcp/releases/latest";
 const UPDATE_FILES = [
   "scripts/ssh-mcp-server.mjs",
@@ -270,7 +277,8 @@ const tools = [
         content: { type: "string", description: "New file content." },
         backup: { type: "boolean", description: "Backup before overwrite. Default true." },
         sudo: { type: "boolean", description: "Write via sudo tee." },
-        encoding: { type: "string", enum: ["text", "base64"], description: "text or base64. Default text." }
+        encoding: { type: "string", enum: ["text", "base64"], description: "text or base64. Default text." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
       },
       required: ["path", "content"]
     }
@@ -289,7 +297,8 @@ const tools = [
           enum: ["status", "start", "stop", "restart", "enable", "disable"],
           description: "Systemd action."
         },
-        sudo: { type: "boolean", description: "Run via sudo -n. Default true." }
+        sudo: { type: "boolean", description: "Run via sudo -n. Default true." },
+        confirm: { type: "boolean", description: "Required true for start/stop/restart/enable/disable." }
       },
       required: ["service", "action"]
     }
@@ -327,7 +336,8 @@ const tools = [
         replacement: { type: "string", description: "Sed replacement string." },
         flags: { type: "string", description: "Sed flags. Default g." },
         backup: { type: "boolean", description: "Backup before patch. Default true." },
-        sudo: { type: "boolean", description: "Run mv via sudo." }
+        sudo: { type: "boolean", description: "Run mv via sudo." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
       },
       required: ["path"]
     }
@@ -389,7 +399,8 @@ const tools = [
         },
         packages: { type: "array", items: { type: "string" }, description: "Package names." },
         sudo: { type: "boolean", description: "Use sudo -n. Default true." },
-        timeoutMs: { type: "number", description: "Timeout ms. Default 120000." }
+        timeoutMs: { type: "number", description: "Timeout ms. Default 120000." },
+        confirm: { type: "boolean", description: "Required true for install/remove/update/upgrade." }
       },
       required: ["action"]
     }
@@ -405,7 +416,8 @@ const tools = [
         action: { type: "string", enum: ["list", "add", "remove"], description: "Cron action." },
         user: { type: "string", description: "Crontab owner. Omit for current SSH user." },
         schedule: { type: "string", description: "Cron schedule, 5 fields (e.g. '0 * * * *'). Required for add." },
-        command: { type: "string", description: "Command. Required for add/remove." }
+        command: { type: "string", description: "Command. Required for add/remove." },
+        confirm: { type: "boolean", description: "Required true for add/remove." }
       },
       required: ["action"]
     }
@@ -521,7 +533,8 @@ const tools = [
           enum: ["auto", "netplan", "networkmanager", "network-scripts", "networkd", "rc.local"],
           description: "Persistence method. Default auto-detects from the running system."
         },
-        timeoutMs: { type: "number", description: "Timeout ms. Default 60000." }
+        timeoutMs: { type: "number", description: "Timeout ms. Default 60000." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
       }
     }
   },
@@ -584,7 +597,8 @@ const tools = [
         system: { type: "boolean", description: "Create as system user (no home, UID < 1000)." },
         createHome: { type: "boolean", description: "Create home directory on add (default true)." },
         removeHome: { type: "boolean", description: "Remove home directory and mail spool on del (default false)." },
-        sudo: { type: "boolean", description: "Run via sudo. Default true for this tool." }
+        sudo: { type: "boolean", description: "Run via sudo. Default true for this tool." },
+        confirm: { type: "boolean", description: "Required true for add/del/mod/passwd/lock/unlock." }
       },
       required: ["action"]
     }
@@ -602,7 +616,8 @@ const tools = [
         owner: { type: "string", description: "Owner username to set." },
         group: { type: "string", description: "Group name to set." },
         recursive: { type: "boolean", description: "Apply recursively (-R). Default false." },
-        sudo: { type: "boolean", description: "Run via sudo. Default false." }
+        sudo: { type: "boolean", description: "Run via sudo. Default false." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
       },
       required: ["path"]
     }
@@ -624,7 +639,8 @@ const tools = [
         commands: { type: "string", description: "Allowed commands. Default ALL." },
         runas: { type: "string", description: "Run-as spec. Default ALL:ALL." },
         nopasswd: { type: "boolean", description: "Add NOPASSWD flag (no password prompt). Default true." },
-        ruleFile: { type: "string", description: "Custom sudoers.d file path. Default /etc/sudoers.d/<username>." }
+        ruleFile: { type: "string", description: "Custom sudoers.d file path. Default /etc/sudoers.d/<username>." },
+        confirm: { type: "boolean", description: "Required true for add/remove." }
       },
       required: ["action"]
     }
@@ -644,7 +660,9 @@ function getSkillInstructions() {
 
 const handlers = {
   initialize(message) {
-    void selfUpdate();
+    if (process.env.SSH_OPS_AUTO_UPDATE === "1") {
+      void selfUpdate();
+    }
     const instructions = getSkillInstructions();
     const result = {
       protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
@@ -655,7 +673,7 @@ const handlers = {
       },
       serverInfo: {
         name: "ssh-ops",
-        version: "0.1.0"
+        version: SERVER_VERSION
       }
     };
     if (instructions) result.instructions = instructions;
@@ -676,6 +694,53 @@ const handlers = {
     return {};
   }
 };
+
+function validateInput(toolName, params) {
+  if (toolName === "ssh_file_read" || toolName === "ssh_file_write" || toolName === "ssh_file_patch") {
+    if (params.path && !params.path.startsWith("/")) {
+      return `path must be absolute (start with /). Got: ${params.path}`;
+    }
+  }
+  if (toolName === "ssh_service") {
+    const unit = params.unit || params.service;
+    if (unit && !/^[a-zA-Z0-9@_:.+-]+$/.test(unit)) {
+      return `service/unit contains invalid characters. Use only [a-zA-Z0-9@_:.+-]. Got: ${unit}`;
+    }
+  }
+  if (toolName === "ssh_package") {
+    const entries = Array.isArray(params.packages) ? params.packages : (params.package ? [params.package] : []);
+    for (const pkg of entries) {
+      if (!/^[a-zA-Z0-9._+:-]+$/.test(pkg)) {
+        return `package name contains invalid characters. Use only [a-zA-Z0-9._+:-]. Got: ${pkg}`;
+      }
+    }
+  }
+  if (toolName === "ssh_chmod") {
+    if (params.mode !== undefined && !/^[0-7]{3,4}$|^[ugoa]*[+\-=][rwxXst]+$/.test(params.mode)) {
+      return `mode is invalid. Use octal (755, 0644) or symbolic (u+x, g-w). Got: ${params.mode}`;
+    }
+    if (params.owner !== undefined && !/^[a-zA-Z0-9._-]+$/.test(params.owner)) {
+      return `owner contains invalid characters. Use only [a-zA-Z0-9._-]. Got: ${params.owner}`;
+    }
+    if (params.group !== undefined && !/^[a-zA-Z0-9._-]+$/.test(params.group)) {
+      return `group contains invalid characters. Use only [a-zA-Z0-9._-]. Got: ${params.group}`;
+    }
+  }
+  if (toolName === "ssh_sudo_rule") {
+    if (params.ruleFile !== undefined && !/^[a-zA-Z0-9._-]+$/.test(params.ruleFile)) {
+      return `ruleFile must be a plain filename with no path separators or "..". Got: ${params.ruleFile}`;
+    }
+    if (params.commands !== undefined) {
+      const cmds = Array.isArray(params.commands) ? params.commands : [params.commands];
+      for (const cmd of cmds) {
+        if (/[\r\n\x00]/.test(cmd)) {
+          return `commands must not contain newlines or null bytes.`;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 async function callTool(name, args) {
   if (name === "ssh_profiles") {
@@ -706,12 +771,19 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_file_read") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
     const command = fileReadScript(args.path, args.maxBytes, args.encoding);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   if (name === "ssh_file_write") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    if (args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_file_write.`, true);
+    }
     const command = fileWriteScript(args.path, args.content, {
       backup: args.backup !== false,
       sudo: Boolean(args.sudo),
@@ -722,6 +794,12 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_service") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    const mutatingActions = { start: true, stop: true, restart: true, enable: true, disable: true };
+    if (mutatingActions[args.action] && args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_service.`, true);
+    }
     const command = serviceScript(args.service, args.action, {
       sudo: args.sudo !== false
     });
@@ -736,6 +814,11 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_file_patch") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    if (args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_file_patch.`, true);
+    }
     const command = filePatchScript(args.path, {
       startLine: args.startLine,
       endLine: args.endLine,
@@ -778,6 +861,12 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_package") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    const mutatingActions = { install: true, remove: true, update: true, upgrade: true };
+    if (mutatingActions[args.action] && args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_package.`, true);
+    }
     const command = packageScript({
       action: args.action,
       packages: Array.isArray(args.packages) ? args.packages : [],
@@ -788,6 +877,10 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_cron") {
+    const mutatingActions = { add: true, remove: true };
+    if (mutatingActions[args.action] && args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_cron.`, true);
+    }
     const command = cronScript({
       action: args.action,
       user: args.user,
@@ -856,6 +949,9 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_ip_assign") {
+    if (args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_ip_assign.`, true);
+    }
     let resolved = { iface: args.iface, ips: args.ips, gateway: args.gateway, dns: args.dns };
 
     if (args.group) {
@@ -919,6 +1015,10 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_user") {
+    const mutatingActions = { add: true, del: true, mod: true, passwd: true, lock: true, unlock: true };
+    if (mutatingActions[args.action] && args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_user.`, true);
+    }
     const command = userManageScript({
       action: args.action,
       username: args.username,
@@ -941,6 +1041,11 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_chmod") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    if (args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_chmod.`, true);
+    }
     const command = chmodScript({
       path: args.path,
       mode: args.mode,
@@ -958,6 +1063,12 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_sudo_rule") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+    const mutatingActions = { add: true, remove: true };
+    if (mutatingActions[args.action] && args.confirm !== true) {
+      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_sudo_rule.`, true);
+    }
     const command = sudoRuleScript({
       action: args.action,
       username: args.username,

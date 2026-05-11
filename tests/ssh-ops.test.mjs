@@ -873,3 +873,67 @@ test("sudoRuleScript list includes /etc/sudoers content", async () => {
   assert.ok(s.includes("/etc/sudoers"), "should include sudoers path");
   assert.ok(s.includes("sudoers.d"), "should include sudoers.d dir");
 });
+
+test("shellQuote escapes single quotes in special-char targets", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=shellquote-special-${Date.now()}`;
+  const { fileReadScript } = await import(moduleUrl);
+  // Path containing single quote — shellQuote must escape it so script is valid
+  const script = fileReadScript("/var/log/it's-a-test.log", 1024);
+  assert.ok(!script.includes("it's-a-test"), "raw single-quote should not appear unescaped");
+  assert.ok(script.includes("it'\\''s-a-test"), "single quote should be escaped via '\\'' pattern");
+});
+
+test("resolveTarget with localSwitchUser in profile populates options.localSwitchUser", async () => {
+  const configPath = writeTempConfig({
+    profiles: {
+      internal: {
+        host: "10.0.1.5",
+        user: "app",
+        localSwitchUser: "relay"
+      }
+    }
+  });
+  const previousConfig = process.env.SSH_OPS_CONFIG;
+  process.env.SSH_OPS_CONFIG = configPath;
+
+  try {
+    const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=local-switch-${Date.now()}`;
+    const { resolveTarget } = await import(moduleUrl);
+    const target = resolveTarget({ target: "internal" });
+    assert.equal(target.options.localSwitchUser, "relay", "options.localSwitchUser should be relay");
+  } finally {
+    if (previousConfig === undefined) {
+      delete process.env.SSH_OPS_CONFIG;
+    } else {
+      process.env.SSH_OPS_CONFIG = previousConfig;
+    }
+  }
+});
+
+test("decryptPassword throws on corrupted ciphertext", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=dec-corrupt-${Date.now()}`;
+  const { decryptPassword } = await import(moduleUrl);
+  assert.throws(
+    () => decryptPassword("aGVsbG8="),
+    (err) => err instanceof Error,
+    "decryptPassword should throw on invalid ciphertext"
+  );
+});
+
+test("formatRunResult marks truncated flag and includes byte count in output", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=truncate-fmt-${Date.now()}`;
+  const { formatRunResult } = await import(moduleUrl);
+  const result = {
+    exitCode: 0,
+    stdout: "partial output\n[OUTPUT TRUNCATED: received 2000000 bytes, limit 500 bytes — 1999500 bytes dropped]",
+    stderr: "",
+    stdoutTruncated: true,
+    stderrTruncated: false,
+    timedOut: false,
+    durationMs: 42
+  };
+  const out = formatRunResult(result);
+  assert.ok(out.includes("stdoutTruncated: true"), "formatted output should flag stdoutTruncated");
+  assert.ok(out.includes("OUTPUT TRUNCATED"), "formatted output should include truncation notice");
+  assert.ok(out.includes("2000000"), "truncation notice should include total byte count");
+});

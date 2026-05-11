@@ -2,6 +2,17 @@
 
 SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords and credentials stored encrypted (AES-256-GCM, device-specific key).
 
+## Security Model
+
+- **Encrypted credentials** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device-specific key at `~/.ssh-ops/.encryption-key` (0600). Passwords from one machine cannot be decrypted on another.
+- **Dynamic config permissions** — `ssh-ops.dynamic.json` written with 0600 permissions so other local users cannot read stored credentials.
+- **Auto-updates opt-in** — `SSH_OPS_AUTO_UPDATE=1` must be set to enable update checks on session start. Default is off.
+- **Mutating tools require `confirm: true`** — all write/destructive MCP tools enforce a server-side `confirm` parameter guard; omitting it returns an error before any SSH call is made.
+- **Double-confirmation for critical operations** — data deletion, service stop/restart on key services, user removal, bulk multi-host writes, and reboots require two explicit confirmations. The first states what will happen; the second confirms irreversibility.
+- **No credentials sent to the AI model** — SSH runs via a local subprocess. Passwords are decrypted in-process and injected via the `SSHPASS` env var; they never appear in tool output or model context.
+
+---
+
 ## Install
 
 **No prerequisites** — all dependencies are auto-installed.
@@ -174,6 +185,14 @@ profiles:
 
 SSH Ops runs `sudo -n -u relay ssh root@10.0.1.10` locally — ideal when internal keys are owned by a service account on the bastion. Set per-profile or in `defaults`.
 
+**Choosing a routing strategy:**
+
+| Strategy | When to use |
+|----------|-------------|
+| `jumpChain` / `jumpHost` (`-J`) | MCP server runs on workstation; direct or single-hop to target via standard ProxyJump |
+| `jumpProfile` + `jumpUser`/`targetUser` | MCP server runs on workstation; two-hop via bastion where keys for internal servers live on the jump host (nested SSH) |
+| `localSwitchUser` | MCP server runs ON the bastion itself; need to switch to a local service account before SSHing to internal targets |
+
 ### IP assignment
 
 Assign IPs to a remote interface — applied immediately and persisted across reboots. Three ways to specify IPs:
@@ -297,6 +316,18 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 
 The MCP server communicates over newline-delimited JSON-RPC on stdio.
 
+### Read-only vs Mutating Tools
+
+| Category | Read-only | Mutating |
+|----------|-----------|---------|
+| Files | `ssh_file_read` | `ssh_file_write`, `ssh_file_patch` |
+| System | `ssh_health_report`, `ssh_disk_report`, `ssh_inventory` | `ssh_service`, `ssh_package`, `ssh_ip_assign` |
+| Users | `ssh_user` list/info | `ssh_user` add/del/mod/passwd/lock/unlock, `ssh_chmod`, `ssh_sudo_rule` |
+| Cron | `ssh_cron` list | `ssh_cron` add/remove |
+| Config | `ssh_profiles`, `ssh_list_jumps`, `ssh_list_ip_groups`, `ssh_list_keys` | `ssh_add_profile`, `ssh_remove_profile`, `ssh_add_jump`, `ssh_remove_jump`, `ssh_save_ip_group`, `ssh_remove_ip_group` |
+| Exec | `ssh_run` (read-only commands), `ssh_run_multi` | `ssh_run` (mutating commands), `ssh_network_check` |
+| Logs | `ssh_log_search` | — |
+
 ---
 
 ## CLI
@@ -352,3 +383,32 @@ CLI options:
 - **Double confirmation** — critical/destructive operations (data deletion, service stop/restart on key services, user removal, bulk multi-host writes, reboots) require two explicit "yes" confirmations before any tool is called. The first confirmation states what will happen; the second confirms the action is irreversible.
 - **Large output export** — when output is expected to exceed ~100 lines (user lists, log dumps, bulk queries), the model exports to a remote `/tmp` file, pulls via `scp` to `~/Downloads/`, and reports the local path rather than streaming raw output through MCP.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
+
+---
+
+## Troubleshooting
+
+**`Permission denied (publickey)`**
+The SSH key for this server is missing or not loaded. Check `~/.ssh/` for a matching key, then add `identityFile: ~/.ssh/your_key` to the profile in `ssh-ops.config.yaml` or via `ssh_add_profile`.
+
+**`sudo: a password is required`**
+`localSwitchUser` (or `jumpUser`) relies on passwordless sudo. Grant `NOPASSWD` for the service account in `/etc/sudoers.d/` on the bastion, or use `ssh_sudo_rule` to set it up.
+
+**`Host key verification failed`**
+The remote host key is not in `~/.ssh/known_hosts`. Add the following to the `defaults` block in your config:
+```yaml
+defaults:
+  strictHostKeyChecking: accept-new
+```
+
+**`sshpass: command not found`**
+Required for password-based profiles. Install it:
+- macOS: `brew install esolitos/ipa/sshpass`
+- Ubuntu/Debian: `sudo apt install sshpass`
+- RHEL/CentOS: `sudo yum install sshpass`
+
+**Auto-updates not running**
+Auto-updates are disabled by default. Set `SSH_OPS_AUTO_UPDATE=1` in your environment (e.g. in `~/.zshrc` or `~/.bashrc`) to enable background update checks on every `initialize`.
+
+**MCP server not loading skill / no instructions**
+The `initialize` response must include an `instructions` field for Claude Code to pick up the skill. Verify by running `node scripts/ssh-mcp-server.mjs` and sending a raw `initialize` request — the response `result` should contain `instructions`. Re-running the installer or `/reload-plugins` in Claude Code reloads the skill.
