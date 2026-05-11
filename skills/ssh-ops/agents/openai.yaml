@@ -1,3 +1,19 @@
 display_name: SSH Ops
-short_description: Use SSH Ops MCP tools for remote server checks.
-default_prompt: Check a remote server with SSH Ops.
+short_description: 13 SSH tools for remote Linux server ops — inventory, health, files, services, packages, cron, network.
+long_description: |
+  SSH Ops provides 13 MCP tools for operating remote Linux servers over SSH.
+  Covers hardware inventory, health checks, disk reports, log search, network
+  probing (ping/port/TLS), file read/write/patch (binary-safe), systemd service
+  control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, and
+  parallel multi-host execution. Uses your local ssh binary and existing keys.
+  Does not store passwords or private keys.
+default_prompt: Run a health check on my production server with SSH Ops.
+example_prompts:
+  - Check my server hardware with SSH Ops.
+  - Run a health check across all my servers.
+  - Install nginx on my production server.
+  - Search nginx logs for errors in the last hour.
+  - Add a daily backup cron job on my server.
+  - Can my app server reach the database on port 5432?
+  - Read /etc/nginx/nginx.conf on production.
+  - Replace line 5 in /etc/hosts with a new entry.
