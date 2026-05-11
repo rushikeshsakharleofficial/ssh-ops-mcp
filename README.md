@@ -1,6 +1,6 @@
 # SSH Ops
 
-SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works as a plugin for **Claude Code** and **Codex**. Uses your local `ssh` binary, existing keys, and SSH config. Does not store passwords or private keys.
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Does not store passwords or private keys.
 
 ## Install
 
@@ -39,8 +39,8 @@ Also:
 - Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
 - Auto-installs `claude` CLI if missing
 - Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
-- Schedules a **weekly auto-update** (cron on macOS/Linux, Scheduled Task on Windows)
 - Re-running updates all files; your `ssh-ops.config.yaml` is preserved
+- **Auto-updates on session start** — MCP server checks GitHub Releases on every `initialize` and silently pulls updates when a new version is available
 
 Restart your IDE or CLI session after running.
 
@@ -53,7 +53,7 @@ SSH_OPS_DIR=~/tools/ssh-ops curl -fsSL https://raw.githubusercontent.com/rushike
 $env:SSH_OPS_DIR="C:\tools\ssh-ops"; irm https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1 | iex
 ```
 
-**Update:** re-run the same command — it does `git pull` on the existing installation.
+**Update:** re-run the same install command to force an immediate update.
 
 ---
 
@@ -102,17 +102,39 @@ Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `roo
 
 ## MCP Tools
 
+### Diagnostics (read-only)
+
 | Tool | Description |
 |------|-------------|
 | `ssh_profiles` | List configured profiles without connecting |
-| `ssh_run` | Run an arbitrary remote command or script |
-| `ssh_inventory` | Read-only hardware and VM inventory (OS, CPU, RAM, disk, network) |
-| `ssh_disk_report` | Read-only filesystem, inode, and container storage report |
-| `ssh_health_report` | Read-only load, services, journal errors, processes, Docker snapshot |
-| `ssh_file_read` | Read a remote file |
-| `ssh_file_write` | Overwrite a remote file (backs up original by default) |
-| `ssh_service` | Start, stop, restart, enable, disable, or status a systemd service |
+| `ssh_inventory` | Hardware and VM inventory — OS, CPU, RAM, disk, PCI, network |
+| `ssh_disk_report` | Filesystem, inode, and container storage report |
+| `ssh_health_report` | Load, services, journal errors, processes, Docker snapshot |
 | `ssh_log_search` | Search systemd journal or a log file by pattern |
+| `ssh_network_check` | Ping, port probe, TLS cert check — runs FROM the SSH server to another host |
+
+### Execution
+
+| Tool | Description |
+|------|-------------|
+| `ssh_run` | Run a command or script on a single remote host |
+| `ssh_run_multi` | Run a command on multiple hosts in parallel; returns per-target results as text or JSON |
+
+### File Operations
+
+| Tool | Description |
+|------|-------------|
+| `ssh_file_read` | Read a remote file (`encoding: "base64"` for binary) |
+| `ssh_file_write` | Overwrite a remote file; auto-backup before write (`encoding: "base64"` for binary) |
+| `ssh_file_patch` | Edit a remote file — replace a line range or regex find-and-replace |
+
+### System Management *(confirm before write actions)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_service` | Systemd service control — status, start, stop, restart, enable, disable |
+| `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
+| `ssh_cron` | Crontab CRUD for any user — list, add, remove |
 
 The MCP server communicates over newline-delimited JSON-RPC on stdio.
 
