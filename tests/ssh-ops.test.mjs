@@ -541,3 +541,67 @@ test("cronScript add throws when schedule missing", async () => {
     /schedule is required for add/
   );
 });
+
+test("encryptPassword / decryptPassword round-trip", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=enc-roundtrip-${Date.now()}`;
+  const { encryptPassword, decryptPassword } = await import(moduleUrl);
+  const plaintext = "my$3cret!";
+  const encrypted = encryptPassword(plaintext);
+  assert.ok(typeof encrypted === "string", "encrypted is string");
+  assert.notEqual(encrypted, plaintext);
+  assert.equal(decryptPassword(encrypted), plaintext);
+});
+
+test("encryptPassword produces different ciphertext each call", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=enc-unique-${Date.now()}`;
+  const { encryptPassword } = await import(moduleUrl);
+  const a = encryptPassword("same-pass");
+  const b = encryptPassword("same-pass");
+  assert.notEqual(a, b, "IV randomness should produce different ciphertext");
+});
+
+test("addProfile adds profile to dynamic config and listProfiles returns it", async () => {
+  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
+  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-profile-${Date.now()}`;
+  const { addProfile, removeProfile } = await import(moduleUrl);
+  try {
+    const result = addProfile("test-add-profile", { host: "10.0.0.1", user: "admin" });
+    assert.ok(result.profiles["test-add-profile"], "profile should be present after addProfile");
+    assert.equal(result.profiles["test-add-profile"].host, "10.0.0.1");
+  } finally {
+    // clean up: remove test profile from dynamic config
+    if (existsSync(dynPath)) {
+      try { removeProfile("test-add-profile"); } catch {}
+      const after = JSON.parse(rfs(dynPath, "utf8"));
+      if (Object.keys(after.profiles || {}).length === 0) unlinkSync(dynPath);
+    }
+  }
+});
+
+test("addProfile throws on invalid name", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-badname-${Date.now()}`;
+  const { addProfile } = await import(moduleUrl);
+  assert.throws(
+    () => addProfile("bad name!", { host: "1.2.3.4" }),
+    /invalid profile name/i
+  );
+});
+
+test("addProfile throws when host missing", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-nohost-${Date.now()}`;
+  const { addProfile } = await import(moduleUrl);
+  assert.throws(
+    () => addProfile("myserver", {}),
+    /host is required/i
+  );
+});
+
+test("removeProfile throws when profile not in dynamic config", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=rm-notfound-${Date.now()}`;
+  const { removeProfile } = await import(moduleUrl);
+  assert.throws(
+    () => removeProfile("nonexistent"),
+    /not found in dynamic config/i
+  );
+});

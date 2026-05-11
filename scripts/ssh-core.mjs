@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -22,6 +23,39 @@ const HOME_CONFIG_FILES = [
   "ssh-ops.json"
 ];
 
+const DYNAMIC_CONFIG = join(PLUGIN_ROOT, "ssh-ops.dynamic.json");
+const ENCRYPTION_KEY_FILE = join(PLUGIN_ROOT, ".encryption-key");
+const ENC_ALGO = "aes-256-gcm";
+
+function getOrCreateEncryptionKey() {
+  if (existsSync(ENCRYPTION_KEY_FILE)) {
+    return Buffer.from(readFileSync(ENCRYPTION_KEY_FILE, "utf8").trim(), "hex");
+  }
+  const key = randomBytes(32);
+  writeFileSync(ENCRYPTION_KEY_FILE, key.toString("hex") + "\n", { mode: 0o600 });
+  try { chmodSync(ENCRYPTION_KEY_FILE, 0o600); } catch {}
+  return key;
+}
+
+export function encryptPassword(password) {
+  const key = getOrCreateEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(ENC_ALGO, key, iv);
+  const enc = Buffer.concat([cipher.update(password, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${enc.toString("hex")}:${tag.toString("hex")}`;
+}
+
+export function decryptPassword(encrypted) {
+  const key = getOrCreateEncryptionKey();
+  const parts = encrypted.split(":");
+  if (parts.length !== 3) throw new Error("Invalid encrypted password format.");
+  const [ivHex, encHex, tagHex] = parts;
+  const decipher = createDecipheriv(ENC_ALGO, key, Buffer.from(ivHex, "hex"));
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+  return decipher.update(Buffer.from(encHex, "hex"), undefined, "utf8") + decipher.final("utf8");
+}
+
 let _configCache = null;
 let _configCacheTime = 0;
 const CONFIG_CACHE_TTL_MS = 5_000;
@@ -33,7 +67,8 @@ export function loadConfig() {
   }
   const configPaths = [
     ...preferredExistingConfigPaths(PLUGIN_ROOT, ROOT_CONFIG_FILES),
-    ...preferredExistingConfigPaths(join(os.homedir(), ".ssh"), HOME_CONFIG_FILES)
+    ...preferredExistingConfigPaths(join(os.homedir(), ".ssh"), HOME_CONFIG_FILES),
+    DYNAMIC_CONFIG
   ];
   if (process.env.SSH_OPS_CONFIG) {
     for (const rawPath of process.env.SSH_OPS_CONFIG.split(delimiter)) {
@@ -182,6 +217,52 @@ export function listProfiles() {
   };
 }
 
+export function addProfile(name, profile) {
+  if (!name || typeof name !== "string") throw new Error("name is required.");
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error(`Invalid profile name "${name}". Use only letters, digits, hyphens, and underscores.`);
+  if (!profile.host || typeof profile.host !== "string") throw new Error("host is required.");
+  let dynamic = { profiles: {} };
+  try {
+    if (existsSync(DYNAMIC_CONFIG)) {
+      dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
+    }
+  } catch {}
+  dynamic.profiles = dynamic.profiles || {};
+  const entry = {
+    host: profile.host,
+    ...(profile.user && { user: profile.user }),
+    ...(profile.port && { port: Number(profile.port) }),
+    ...(profile.identityFile && { identityFile: profile.identityFile }),
+    ...(profile.access && { access: profile.access }),
+    ...(Array.isArray(profile.extraArgs) && profile.extraArgs.length > 0 && { extraArgs: profile.extraArgs })
+  };
+  if (profile.password) {
+    entry.encryptedPassword = encryptPassword(String(profile.password));
+    entry.batchMode = false;
+  }
+  dynamic.profiles[name] = entry;
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  _configCache = null;
+  _configCacheTime = 0;
+  return listProfiles();
+}
+
+export function removeProfile(name) {
+  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`Profile "${name}" not found in dynamic config.`);
+  let dynamic = { profiles: {} };
+  try {
+    dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
+  } catch { throw new Error(`Profile "${name}" not found in dynamic config.`); }
+  if (!dynamic.profiles || !dynamic.profiles[name]) {
+    throw new Error(`Profile "${name}" not found in dynamic config. Only MCP-added profiles can be removed.`);
+  }
+  delete dynamic.profiles[name];
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  _configCache = null;
+  _configCacheTime = 0;
+  return listProfiles();
+}
+
 export function resolveTarget(input = {}) {
   const config = loadConfig();
   const requestedTarget = input.profile || input.target || input.host || config.defaultTarget;
@@ -306,10 +387,26 @@ export async function runSshCommand(input = {}) {
   }
 
   const startedAt = Date.now();
-  const result = await runProcess("ssh", sshArgs, {
+  let processCommand = "ssh";
+  let processArgs = sshArgs;
+  let processEnv;
+
+  if (targetInfo.options.encryptedPassword) {
+    try {
+      const plainPass = decryptPassword(targetInfo.options.encryptedPassword);
+      processCommand = "sshpass";
+      processArgs = ["-e", "ssh", ...sshArgs];
+      processEnv = { SSHPASS: plainPass };
+    } catch {
+      throw new Error("Failed to decrypt profile password. Re-add the profile with ssh_add_profile.");
+    }
+  }
+
+  const result = await runProcess(processCommand, processArgs, {
     input: stdin,
     timeoutMs,
-    maxOutputBytes: Number(targetInfo.options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES)
+    maxOutputBytes: Number(targetInfo.options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES),
+    env: processEnv
   });
 
   return {
@@ -871,7 +968,8 @@ function runProcess(command, args, options = {}) {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
+      windowsHide: true,
+      env: options.env ? { ...process.env, ...options.env } : process.env
     });
 
     let stdout = "";

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  addProfile,
   cronScript,
   diskReportScript,
   filePatchScript,
@@ -14,6 +15,7 @@ import {
   networkCheckScript,
   packageScript,
   PLUGIN_ROOT,
+  removeProfile,
   runMultiSshCommand,
   runSshCommand,
   serviceScript
@@ -390,6 +392,37 @@ const tools = [
       },
       required: ["action"]
     }
+  },
+  {
+    name: "ssh_add_profile",
+    title: "Add SSH Profile",
+    description: "Add or update an SSH profile in the dynamic config. Passwords are stored AES-256-GCM encrypted. Use for onboarding new servers or storing password-based credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Profile name (alphanumeric, hyphens, underscores)." },
+        host: { type: "string", description: "Hostname or IP address." },
+        user: { type: "string", description: "SSH username." },
+        port: { type: "number", description: "SSH port. Default 22." },
+        password: { type: "string", description: "SSH password. Stored encrypted. Requires sshpass on the local machine." },
+        identityFile: { type: "string", description: "Path to SSH private key file." },
+        access: { type: "string", enum: ["normal", "sudo"], description: "Set to sudo to prepend sudo to all commands for this profile." },
+        extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." }
+      },
+      required: ["name", "host"]
+    }
+  },
+  {
+    name: "ssh_remove_profile",
+    title: "Remove SSH Profile",
+    description: "Remove a dynamically-added SSH profile. Only profiles added via ssh_add_profile can be removed this way.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Profile name to remove." }
+      },
+      required: ["name"]
+    }
   }
 ];
 
@@ -544,6 +577,24 @@ async function callTool(name, args) {
     });
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_add_profile") {
+    const profiles = addProfile(args.name, {
+      host: args.host,
+      user: args.user,
+      port: args.port,
+      password: args.password,
+      identityFile: args.identityFile,
+      access: args.access,
+      extraArgs: args.extraArgs
+    });
+    return textResult(JSON.stringify(profiles, null, 2));
+  }
+
+  if (name === "ssh_remove_profile") {
+    const profiles = removeProfile(args.name);
+    return textResult(JSON.stringify(profiles, null, 2));
   }
 
   return textResult(`Unknown tool: ${name}`, true);

@@ -1,7 +1,7 @@
 {
   "name": "ssh-ops",
-  "version": "1.4.0",
-  "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, and cron CRUD.",
+  "version": "1.5.0",
+  "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, cron CRUD, and dynamic profile management with encrypted password storage.",
   "author": {
     "name": "Rushikesh Sakharle",
     "url": "https://github.com/rushikeshsakharleofficial"
@@ -24,8 +24,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SSH Ops",
-    "shortDescription": "13 SSH tools: inventory, files, services, packages, cron, network.",
-    "longDescription": "SSH Ops exposes 13 MCP tools for remote Linux server operations: hardware inventory, health checks, disk reports, log search, network probing, file read/write/patch (binary-safe), systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, and parallel multi-host execution. Reuses the local ssh binary, existing SSH config, and profile files without storing passwords or private keys.",
+    "shortDescription": "15 SSH tools: inventory, files, services, packages, cron, network, dynamic profiles.",
+    "longDescription": "SSH Ops exposes 15 MCP tools for remote Linux server operations: hardware inventory, health checks, disk reports, log search, network probing, file read/write/patch (binary-safe), systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, parallel multi-host execution, and dynamic profile management with AES-256-GCM encrypted password storage.",
     "developerName": "Rushikesh Sakharle",
     "category": "Productivity",
     "capabilities": [
@@ -39,7 +39,9 @@
       "Install nginx on my production server.",
       "Search nginx logs for errors in the last hour.",
       "Add a daily backup cron job on my server.",
-      "Can my app server reach the database on port 5432?"
+      "Can my app server reach the database on port 5432?",
+      "Add a new server with password login to SSH Ops profiles.",
+      "Remove the staging server from SSH Ops profiles."
     ],
     "brandColor": "#10B981"
   }
