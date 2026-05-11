@@ -255,7 +255,7 @@ CLAUDEMD
       const entry = {
         scope: 'user',
         installPath: '$PLUGIN_CACHE',
-        version: '$(cat "$DIR/VERSION" 2>/dev/null || echo latest)',
+        version: '$(cat "$DIR/VERSION" 2>/dev/null | sed "s/^v//" || echo 1.0.0)',
         installedAt: d.plugins[key]?.[0]?.installedAt || new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       };
