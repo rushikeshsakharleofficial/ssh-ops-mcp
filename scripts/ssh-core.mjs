@@ -551,6 +551,15 @@ export function fileWriteScript(path, content, { backup = true, sudo = false } =
   return parts.join("\n") + "\n";
 }
 
+export function serviceScript(service, action, { sudo = true } = {}) {
+  const valid = ["status", "start", "stop", "restart", "enable", "disable"];
+  if (!valid.includes(action)) {
+    throw new Error(`Invalid action: ${action}. Must be one of: ${valid.join(", ")}`);
+  }
+  const prefix = sudo ? "sudo -n " : "";
+  return `set +e\n${prefix}systemctl ${shellQuote(action)} ${shellQuote(String(service))}\n`;
+}
+
 export function formatRunResult(result) {
   const lines = [];
   lines.push(`target: ${result.targetLabel || result.target}`);

@@ -263,3 +263,30 @@ test("fileWriteScript uses sudo tee when sudo: true", async () => {
   const script = fileWriteScript("/etc/nginx/nginx.conf", "worker_processes 1;", { sudo: true });
   assert.ok(script.includes("sudo tee"), "should use sudo tee");
 });
+
+test("serviceScript produces systemctl command with sudo -n by default", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=service-sudo-${Date.now()}`;
+  const { serviceScript } = await import(moduleUrl);
+  const script = serviceScript("nginx", "restart");
+  assert.ok(script.includes("systemctl"), "should contain systemctl");
+  assert.ok(script.includes("sudo -n"), "should use sudo -n by default");
+  assert.ok(script.includes("nginx"), "should contain service name");
+  assert.ok(script.includes("restart"), "should contain action");
+});
+
+test("serviceScript omits sudo when sudo: false", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=service-no-sudo-${Date.now()}`;
+  const { serviceScript } = await import(moduleUrl);
+  const script = serviceScript("nginx", "status", { sudo: false });
+  assert.ok(!script.includes("sudo"), "should not contain sudo");
+  assert.ok(script.includes("systemctl"), "should still contain systemctl");
+});
+
+test("serviceScript throws on invalid action", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=service-invalid-${Date.now()}`;
+  const { serviceScript } = await import(moduleUrl);
+  assert.throws(
+    () => serviceScript("nginx", "delete"),
+    /Invalid action: delete/
+  );
+});
