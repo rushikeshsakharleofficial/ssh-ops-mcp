@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $Base         = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main"
 $Dir          = if ($env:SSH_OPS_DIR)       { $env:SSH_OPS_DIR }       else { "$env:USERPROFILE\.ssh-ops" }
 $CodexPlugins = if ($env:CODEX_PLUGINS_DIR) { $env:CODEX_PLUGINS_DIR } else { "$env:USERPROFILE\.codex\plugins" }
+$ForceSetup   = $args -contains "--setup"
 
 # ── Color helpers ─────────────────────────────────────────────────────────────
 function Step($m) { Write-Host; Write-Host "▶  $m" -ForegroundColor Cyan -NoNewline; Write-Host "" }
@@ -111,6 +112,116 @@ writeFileSync(process.env.KEY_FILE, key, { encoding: 'utf8' });
     & icacls $KeyFile /inheritance:r /grant:r "${env:USERNAME}:F" 2>&1 | Out-Null
     Ok "Device-specific AES-256-GCM key generated at $KeyFile"
 }
+
+# ── Claude Code skill plugin ──────────────────────────────────────────────────
+
+Step "Claude Code skill plugin"
+$ClaudePlugins = if ($env:CLAUDE_PLUGINS_DIR) { $env:CLAUDE_PLUGINS_DIR } else { "$env:USERPROFILE\.claude\plugins" }
+$PluginCache   = "$ClaudePlugins\cache\rushikeshsakharleofficial\ssh-ops\latest"
+$InstalledJson = "$ClaudePlugins\installed_plugins.json"
+
+if (Test-Path "$env:USERPROFILE\.claude") {
+    New-Item -ItemType Directory -Force -Path "$PluginCache\skills\ssh-ops" | Out-Null
+
+    # CLAUDE.md
+    @'
+# SSH Ops Skill
+
+Use the `ssh-ops` skill when the user wants to connect to remote SSH servers, run commands, manage files, check health/disk/logs, assign IPs, or manage server profiles and jump chains.
+
+## Available Skills
+- `ssh-ops:ssh-ops` — full SSH Ops tool reference and usage guidance
+'@ | Set-Content "$PluginCache\CLAUDE.md" -Encoding UTF8
+
+    # Copy SKILL.md
+    Copy-Item "$Dir\skills\ssh-ops\SKILL.md" "$PluginCache\skills\ssh-ops\SKILL.md" -Force
+
+    # Build ssh-ops.skill ZIP (required by Claude Code skill discovery)
+    $tmpSkillDir = Join-Path $env:TEMP "ssh-ops-skill-$PID"
+    New-Item -ItemType Directory -Force -Path "$tmpSkillDir\ssh-ops" | Out-Null
+    Copy-Item "$Dir\skills\ssh-ops\SKILL.md" "$tmpSkillDir\ssh-ops\SKILL.md"
+    $skillZip = "$PluginCache\ssh-ops.skill"
+    if (Test-Path $skillZip) { Remove-Item $skillZip -Force }
+    Compress-Archive -Path "$tmpSkillDir\ssh-ops" -DestinationPath $skillZip -Force
+    Remove-Item $tmpSkillDir -Recurse -Force
+
+    # Register in installed_plugins.json
+    if (Test-Path $InstalledJson) {
+        $env:INSTALLED_JSON  = $InstalledJson
+        $env:PLUGIN_CACHE    = $PluginCache
+        $env:PLUGIN_VERSION  = (Get-Content "$Dir\VERSION" -Raw -ErrorAction SilentlyContinue).Trim().TrimStart('v')
+        node -e @"
+const fs = require('fs');
+const f = process.env.INSTALLED_JSON;
+let d = {};
+try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+d.version = d.version || 2;
+d.plugins = d.plugins || {};
+const key = 'ssh-ops@rushikeshsakharleofficial';
+const prev = d.plugins[key] && d.plugins[key][0];
+const entry = {
+  scope: 'user',
+  installPath: process.env.PLUGIN_CACHE,
+  version: process.env.PLUGIN_VERSION,
+  installedAt: (prev && prev.installedAt) || new Date().toISOString(),
+  lastUpdated: new Date().toISOString()
+};
+d.plugins[key] = [entry];
+fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+"@ 2>&1 | Out-Null
+        Remove-Item Env:\INSTALLED_JSON, Env:\PLUGIN_CACHE, Env:\PLUGIN_VERSION -ErrorAction SilentlyContinue
+        Ok "Registered skill plugin (Claude Code)"
+    } else {
+        Ok "Skill files installed at $PluginCache"
+        Info "Restart Claude Code to activate the ssh-ops skill"
+    }
+} else { Skip "~\.claude not found — skipping skill plugin" }
+
+# ── Gemini CLI skill extension ─────────────────────────────────────────────────
+
+Step "Gemini CLI skill extension"
+$GeminiExtDir = if ($env:GEMINI_EXTENSIONS_DIR) { $env:GEMINI_EXTENSIONS_DIR } else { "$env:USERPROFILE\.gemini\extensions" }
+$GeminiExt    = "$GeminiExtDir\ssh-ops"
+$GeminiEnable = "$GeminiExtDir\extension-enablement.json"
+
+if (Test-Path $GeminiExtDir) {
+    New-Item -ItemType Directory -Force -Path "$GeminiExt\skills\ssh-ops" | Out-Null
+
+    $versionTag = if (Test-Path "$Dir\VERSION") { (Get-Content "$Dir\VERSION" -Raw).Trim() } else { "latest" }
+
+    # gemini-extension.json
+    @"
+{
+  "name": "ssh-ops",
+  "version": "$versionTag",
+  "description": "SSH Ops: 27 tools for remote Linux server ops — run commands, manage users/permissions/sudo, assign IPs, health/disk/logs, service control, package management, cron, jump chains, and dynamic profile management.",
+  "publisher": "rushikeshsakharleofficial",
+  "engines": { "gemini": ">=1.0.0" }
+}
+"@ | Set-Content "$GeminiExt\gemini-extension.json" -Encoding UTF8
+
+    # GEMINI.md
+    "@./skills/ssh-ops/SKILL.md" | Set-Content "$GeminiExt\GEMINI.md" -Encoding UTF8
+
+    # Copy SKILL.md
+    Copy-Item "$Dir\skills\ssh-ops\SKILL.md" "$GeminiExt\skills\ssh-ops\SKILL.md" -Force
+
+    # Enable extension
+    $env:GEMINI_ENABLE = $GeminiEnable
+    $env:HOME_DIR      = $env:USERPROFILE
+    node -e @"
+const fs = require('fs');
+const f = process.env.GEMINI_ENABLE;
+let d = {};
+try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+if (!d['ssh-ops']) {
+  d['ssh-ops'] = { overrides: [process.env.HOME_DIR + '\\\\*'] };
+  fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+}
+"@ 2>&1 | Out-Null
+    Remove-Item Env:\GEMINI_ENABLE, Env:\HOME_DIR -ErrorAction SilentlyContinue
+    Ok "Gemini extension installed and enabled"
+} else { Skip "~\.gemini\extensions not found — skipping Gemini extension" }
 
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
 function AddMcp {
@@ -232,11 +343,80 @@ if ((Has "antigravity") -or (Test-Path "$env:USERPROFILE\.gemini\antigravity")) 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 Step "Config"
-$cfg = Join-Path $Dir "ssh-ops.config.yaml"
-if (-not (Test-Path $cfg)) {
+$cfg     = Join-Path $Dir "ssh-ops.config.yaml"
+$RunSetup = $false
+
+if ($ForceSetup) { $RunSetup = $true }
+elseif (-not (Test-Path $cfg)) {
     Copy-Item (Join-Path $Dir "ssh-ops.config.example.yaml") $cfg
-    Ok "Created $cfg"
-    Info "Edit it to add your server profiles"
+    $RunSetup = $true
+} elseif ((Get-Content $cfg -Raw 2>$null) -match "server\.example\.com") {
+    Warn "Config still contains demo data — running setup"
+    $RunSetup = $true
+}
+
+if ($RunSetup) {
+    if (-not [Environment]::UserInteractive) {
+        Info "Non-interactive install — edit $cfg to add your server profiles"
+    } else {
+        Write-Host
+        Info "Server setup (Enter to skip any field, Ctrl+C to cancel)"
+        Write-Host
+
+        $sHost = Read-Host "  Server host or IP"
+        if ([string]::IsNullOrWhiteSpace($sHost)) {
+            Info "Skipped — edit $cfg to add your server profiles"
+        } else {
+            $sUser  = Read-Host "  SSH user [root]"
+            if ([string]::IsNullOrWhiteSpace($sUser)) { $sUser = "root" }
+            $sPort  = Read-Host "  SSH port [22]"
+            if ([string]::IsNullOrWhiteSpace($sPort)) { $sPort = "22" }
+            $sPname = Read-Host "  Profile name [server1]"
+            if ([string]::IsNullOrWhiteSpace($sPname)) { $sPname = "server1" }
+            $sIdfile = Read-Host "  SSH identity file (blank for default)"
+
+            $sJump = Read-Host "  Route through jump/bastion server? [y/N]"
+            $jumpBlock = ""; $jumpRef = ""; $jHost = ""; $jUser = ""; $jPname = ""
+            if ($sJump -match "^[yY]") {
+                $jHost = Read-Host "  Jump host or IP"
+                $jUser = Read-Host "  Jump SSH user [$env:USERNAME]"
+                if ([string]::IsNullOrWhiteSpace($jUser)) { $jUser = $env:USERNAME }
+                $jSwitchUser = Read-Host "  Switch to user on jump server (blank = none)"
+                $jPname = Read-Host "  Jump profile name [bastion]"
+                if ([string]::IsNullOrWhiteSpace($jPname)) { $jPname = "bastion" }
+                $jumpBlock = "`n  ${jPname}:`n    host: $jHost`n    user: $jUser"
+                $jumpRef   = "`n    jumpProfile: $jPname"
+                if (-not [string]::IsNullOrWhiteSpace($jSwitchUser)) { $jumpRef += "`n    jumpUser: $jSwitchUser" }
+            }
+
+            $sLocalSwitch = Read-Host "  Is ssh-ops on this machine reaching internal hosts via local user switch? [y/N]"
+            $localSwitchLine = ""
+            if ($sLocalSwitch -match "^[yY]") {
+                $lUser = Read-Host "  Local user to switch to (sudo -n -u <user> ssh ...)"
+                if (-not [string]::IsNullOrWhiteSpace($lUser)) { $localSwitchLine = "`n    localSwitchUser: $lUser" }
+            }
+
+            $idLine = if (-not [string]::IsNullOrWhiteSpace($sIdfile)) { "`n    identityFile: $sIdfile" } else { "" }
+
+            $cfgContent = @"
+defaultTarget: $sPname
+defaults:
+  connectTimeoutSec: 12
+  strictHostKeyChecking: accept-new
+  timeoutMs: 120000
+  maxOutputBytes: 2000000
+profiles:
+  ${sPname}:
+    host: $sHost
+    user: $sUser
+    port: $sPort${idLine}${localSwitchLine}${jumpRef}
+${jumpBlock}
+"@
+            $cfgContent | Set-Content $cfg -Encoding UTF8
+            Ok "Config saved: $sPname → $sUser@$sHost"
+            if (-not [string]::IsNullOrWhiteSpace($jHost)) { Info "Via jump: $jPname → $jUser@$jHost" }
+        }
+    }
 } else { Info "Preserved existing $cfg" }
 
 # ── Done ───────────────────────────────────────────────────────────────────────

@@ -517,6 +517,15 @@ if $_run_setup; then
         _jtest_host="$_jhost"
       fi
 
+      # localSwitchUser — for ssh-ops running ON a bastion to reach internal hosts
+      _localswitch_line=""
+      printf "  Is ssh-ops running ON this machine to reach internal hosts via local user switch? [y/N]: "; read -r _onbastion
+      if echo "$_onbastion" | grep -qi "^y"; then
+        printf "  Local user to switch to (sudo -n -u <user> ssh ...): "; read -r _localswitch
+        [ -n "$_localswitch" ] && _localswitch_line="
+    localSwitchUser: $_localswitch"
+      fi
+
       # ── Test connection ──────────────────────────────────────────────────────
       echo
       info "Testing connection..."
@@ -588,14 +597,17 @@ profiles:
   $_pname:
     host: $_host
     user: $_user
-    port: $_port${_id_line}${_jump_ref:-}
+    port: $_port${_id_line}${_localswitch_line:-}${_jump_ref:-}
 ${_jump_block:-}
 YMLEOF
-        if $_conn_ok && [ "$_choice" != "3" ] 2>/dev/null; then
+        if $_conn_ok && [ "${_choice:-0}" != "3" ]; then
           ok "Config saved and connection verified: $_pname → $_user@$_host${_jhost:+ via $_jpname}"
         else
           ok "Config saved (connection not verified): $_pname → $_user@$_host"
           info "Test manually: ssh $_user@$_host"
+        fi
+        if [ -n "$_password" ]; then
+          info "Password not stored in config — run: ssh_add_profile(name=\"$_pname\", host=\"$_host\", user=\"$_user\", password=\"...\")"
         fi
       fi
     fi
