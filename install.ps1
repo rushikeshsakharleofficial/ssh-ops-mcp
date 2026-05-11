@@ -84,6 +84,7 @@ $files = @(
     "scripts/ssh-ops.mjs", "scripts/ssh-cli-options.mjs",
     "ssh-ops.config.example.yaml",
     ".codex-plugin/plugin.json",
+    ".claude-plugin/plugin.json",
     "skills/ssh-ops/SKILL.md",
     "skills/ssh-ops/agents/openai.yaml"
 )
@@ -122,6 +123,19 @@ $InstalledJson = "$ClaudePlugins\installed_plugins.json"
 
 if (Test-Path "$env:USERPROFILE\.claude") {
     New-Item -ItemType Directory -Force -Path "$PluginCache\skills\ssh-ops" | Out-Null
+
+    # Claude Code plugin manifest — enables skill discovery
+    New-Item -ItemType Directory -Path "$PluginCache\.claude-plugin" -Force | Out-Null
+    @'
+{
+  "name": "ssh-ops",
+  "description": "SSH Ops MCP — run commands, manage files, inventory, health, disk, logs, services, packages, cron, users, IP assignment, jump servers on remote hosts via SSH.",
+  "author": {
+    "name": "Rushikesh Sakharle",
+    "url": "https://github.com/rushikeshsakharleofficial"
+  }
+}
+'@ | Set-Content "$PluginCache\.claude-plugin\plugin.json" -Encoding UTF8
 
     # CLAUDE.md — auto-loads skill content into context when plugin is active
     @'

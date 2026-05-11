@@ -132,7 +132,7 @@ fi
 # ── Download files ─────────────────────────────────────────────────────────────
 
 step "Installing SSH Ops to $DIR"
-mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/skills/ssh-ops/agents"
+mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/.claude-plugin" "$DIR/skills/ssh-ops/agents"
 
 fetch() { curl -fsSL "$BASE/$1" -o "$DIR/$1"; }
 fetch VERSION
@@ -142,6 +142,7 @@ fetch scripts/ssh-ops.mjs
 fetch scripts/ssh-cli-options.mjs
 fetch ssh-ops.config.example.yaml
 fetch .codex-plugin/plugin.json
+fetch .claude-plugin/plugin.json
 fetch skills/ssh-ops/SKILL.md
 fetch skills/ssh-ops/agents/openai.yaml
 ok "Files downloaded"
@@ -173,6 +174,19 @@ INSTALLED_JSON="$CLAUDE_PLUGINS/installed_plugins.json"
 
 if [ -d "$CLAUDE_PLUGINS" ]; then
   mkdir -p "$PLUGIN_CACHE/skills/ssh-ops"
+
+  # Claude Code plugin manifest — enables skill discovery
+  mkdir -p "$PLUGIN_CACHE/.claude-plugin"
+  cat > "$PLUGIN_CACHE/.claude-plugin/plugin.json" << 'PLUGINJSON'
+{
+  "name": "ssh-ops",
+  "description": "SSH Ops MCP — run commands, manage files, inventory, health, disk, logs, services, packages, cron, users, IP assignment, jump servers on remote hosts via SSH.",
+  "author": {
+    "name": "Rushikesh Sakharle",
+    "url": "https://github.com/rushikeshsakharleofficial"
+  }
+}
+PLUGINJSON
 
   # CLAUDE.md — auto-loads skill content into context when plugin is active
   cat > "$PLUGIN_CACHE/CLAUDE.md" << 'CLAUDEMD'

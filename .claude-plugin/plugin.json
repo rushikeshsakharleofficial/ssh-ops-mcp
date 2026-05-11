@@ -1,0 +1,8 @@
+{
+  "name": "ssh-ops",
+  "description": "SSH Ops MCP — run commands, manage files, inventory, health, disk, logs, services, packages, cron, users, IP assignment, jump servers on remote hosts via SSH.",
+  "author": {
+    "name": "Rushikesh Sakharle",
+    "url": "https://github.com/rushikeshsakharleofficial"
+  }
+}
