@@ -12,7 +12,7 @@ SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Cl
 curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
 ```
 
-Installs to `~/Library/Application Support/ssh-ops-mcp` (macOS) or `~/.local/share/ssh-ops-mcp` (Linux).
+Installs to `~/.ssh-ops`.
 
 ### Windows (PowerShell)
 
@@ -20,7 +20,7 @@ Installs to `~/Library/Application Support/ssh-ops-mcp` (macOS) or `~/.local/sha
 irm https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1 | iex
 ```
 
-Installs to `%LOCALAPPDATA%\ssh-ops-mcp`.
+Installs to `%USERPROFILE%\.ssh-ops`.
 
 ---
 
