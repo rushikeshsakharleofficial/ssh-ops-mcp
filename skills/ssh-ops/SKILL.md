@@ -21,7 +21,7 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_network_check`: ping, port probe, TLS cert check from remote server
 - `ssh_package`: package management (apt/yum/dnf/apk auto-detect) — CONFIRM for install/remove/update/upgrade unless told automatically
 - `ssh_cron`: crontab list/add/remove for any user — CONFIRM for add/remove unless told automatically
-- `ssh_add_profile`: add or update an SSH profile dynamically; passwords stored AES-256-GCM encrypted; requires `sshpass` on local machine for password-based auth
+- `ssh_add_profile`: add or update an SSH profile dynamically; passwords stored AES-256-GCM encrypted; requires `sshpass` on local machine for password-based auth; `localSwitchUser` for bastion-local execution (see below)
 - `ssh_remove_profile`: remove a dynamically-added profile
 - `ssh_add_jump`: add a jump/bastion server and append to the SSH -J chain; optional `commonUser` sets default user for all target connections; supports password auth
 - `ssh_remove_jump`: remove a jump server and auto-remove from chain
@@ -69,6 +69,19 @@ Config defaults with `jumpProfile`, `jumpUser`, `targetUser` route non-jump targ
 1. Connect to `jumpProfile` using its user.
 2. Run destination SSH as `jumpUser` on jump server.
 3. Connect to final destination as `targetUser`.
+
+## Running on a Jump Server (localSwitchUser)
+
+When ssh-ops MCP is running directly on a bastion/jump server and needs to reach internal hosts:
+- Use `localSwitchUser` in the profile or defaults to switch the local user before running SSH.
+- ssh-ops runs `sudo -n -u <localSwitchUser> ssh <destination>` on the local machine.
+- Keys should be present under `<localSwitchUser>`'s `~/.ssh/` on the bastion.
+
+When a user gives you internal IPs/hosts and ssh_profiles shows `localSwitchUser` is set:
+- Use `ssh_run(target=<IP>, localSwitchUser=<user>, command="hostname")` directly.
+- Do NOT add a jump server — you're already on the bastion.
+
+Add via `ssh_add_profile(name="web1", host="10.0.1.10", localSwitchUser="relay")` or set in `defaults.localSwitchUser` for all profiles.
 
 ## Safety
 

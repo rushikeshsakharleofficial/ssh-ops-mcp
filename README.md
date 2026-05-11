@@ -157,6 +157,23 @@ profiles:
 
 This connects to `bastion` as `operator`, then runs `sudo -n -u relay ssh root@destination` from there — useful when the keys for internal servers live on the jump host.
 
+**Running ssh-ops on the jump server itself (`localSwitchUser`):**
+
+When the MCP server runs directly on a bastion/jump host and needs to reach internal targets, use `localSwitchUser` to switch the local user before running SSH — no outbound hop needed:
+
+```yaml
+defaults:
+  localSwitchUser: relay    # sudo -n -u relay ssh ... on this machine
+  targetUser: root
+profiles:
+  web1:
+    host: 10.0.1.10
+  db1:
+    host: 10.0.1.20
+```
+
+SSH Ops runs `sudo -n -u relay ssh root@10.0.1.10` locally — ideal when internal keys are owned by a service account on the bastion. Set per-profile or in `defaults`.
+
 ### IP assignment
 
 Assign IPs to a remote interface — applied immediately and persisted across reboots. Three ways to specify IPs:
@@ -266,7 +283,7 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 
 | Tool | Description |
 |------|-------------|
-| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords AES-256-GCM encrypted |
+| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords AES-256-GCM encrypted; supports `localSwitchUser` for bastion-local execution |
 | `ssh_remove_profile` | Remove a dynamically-added profile |
 | `ssh_list_keys` | List SSH private key files in `~/.ssh/` and home directory |
 
@@ -319,16 +336,17 @@ CLI options:
 - **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
 - **jumpChain (-J multi-hop)** — when `jumpChain` is set in defaults, SSH Ops builds a `-J user@host1,user@host2,...` argument from the chain profiles. SSH handles each hop natively. Connecting to a server that's already in the chain skips the flag.
 - **jumpProfile (nested SSH)** — legacy two-hop mode: connects to jump host, then runs `sudo -n -u <jumpUser> ssh <destination>` from there via a heredoc. Useful when keys for internal targets live on the jump server.
+- **localSwitchUser** — when ssh-ops itself runs on a bastion/jump server, set `localSwitchUser` to run `sudo -n -u <user> ssh <destination>` locally. Keys stay under the service account; the MCP process runs as the operator user.
 - **commonUser** — fallback SSH username applied to all target connections that have no `user` set in their profile. Stored in dynamic config defaults.
 - **Password auth** — profiles with a password use `sshpass -e` with the decrypted password injected via the `SSHPASS` env var. Password never appears in process args. Requires `sshpass` installed locally.
 - **Encryption** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device key generated at install time (`~/.ssh-ops/.encryption-key`, 0600). Passwords from one machine cannot be decrypted on another.
 - **Auth failure tracking** — SSH exit 255 with auth-failure stderr patterns marks the profile `_authFailed: true` in the dynamic config. Updating credentials clears the flag automatically.
+- **New IP auto-login** — when given an IP not in profiles, SSH Ops tries to connect immediately using the same jump chain and user as existing profiles. Saves the profile on success; asks for credentials only on failure.
 - **IP assignment** — `ssh_ip_assign` runs `ip addr add` immediately, persists via auto-detected network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local), then runs automatic verification: private IPs get gateway + self ping; public IPs get `ping -I $IP 8.8.8.8` + `curl --interface $IP` to confirm outbound traffic exits via the correct source IP. Accepts inline `ips`, a saved `group` name, or a `fromFile` path. `network-scripts` creates `ifcfg-eth0:N` aliases and skips already-persisted IPs.
 - **IP groups** — `ssh_save_ip_group` stores named IP sets (with iface, gateway, dns) in `ssh-ops.dynamic.json`. Reference by name in `ssh_ip_assign(group="name")` to apply the same set to multiple servers without repeating the IP list.
 - **User management** — `ssh_user` generates `useradd`/`userdel`/`usermod`/`chpasswd` scripts based on the action. Passwords set via `chpasswd` (pipe, not CLI arg). All actions verify the user exists before proceeding.
 - **Permissions** — `ssh_chmod` combines `chmod`/`chown`/`chgrp` in one call. When both `owner` and `group` are set, uses `chown owner:group` for efficiency. Shows `ls -la` before and after for confirmation.
 - **Sudoers** — `ssh_sudo_rule` writes to `/etc/sudoers.d/<username>` (never edits `/etc/sudoers` directly). Validates with `visudo -c` before accepting — invalid rules are auto-removed to prevent lockout. Supports specific command lists (e.g. `/bin/systemctl,/usr/bin/apt`) and `NOPASSWD` toggle.
 - **Skill activation** — Claude Code discovers skills from `.skill` ZIP archives. Installer creates `ssh-ops.skill` automatically. Run `/reload-plugins` after install. Gemini CLI uses `~/.gemini/extensions/ssh-ops/` which the installer creates and enables.
-- **New IP auto-login** — when given an IP not in profiles, SSH Ops tries to connect immediately using the same jump chain and user as existing profiles. Saves the profile on success; asks for credentials only on failure.
 - **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
 - **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.

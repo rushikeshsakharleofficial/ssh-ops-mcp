@@ -612,7 +612,13 @@ export async function runSshCommand(input = {}) {
   let processArgs = sshArgs;
   let processEnv;
 
-  if (targetInfo.options.encryptedPassword) {
+  // localSwitchUser: run as a different local user via sudo -n -u <user> -- ssh ...
+  // Used when ssh-ops runs on a jump/bastion server and targets internal hosts
+  const localSwitchUser = targetInfo.options.localSwitchUser;
+  if (localSwitchUser) {
+    processCommand = "sudo";
+    processArgs = ["-n", "-u", String(localSwitchUser), "--", "ssh", ...sshArgs];
+  } else if (targetInfo.options.encryptedPassword) {
     try {
       const plainPass = decryptPassword(targetInfo.options.encryptedPassword);
       processCommand = "sshpass";

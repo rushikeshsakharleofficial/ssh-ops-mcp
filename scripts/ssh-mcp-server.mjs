@@ -163,6 +163,10 @@ const tools = [
           type: "string",
           description: "Optional username applied to destination hosts routed through a configured jump profile."
         },
+        localSwitchUser: {
+          type: "string",
+          description: "Switch to this local user (sudo -n -u) before running SSH. Use when ssh-ops runs on a jump/bastion server and internal targets require a different local user for key access."
+        },
         sshOptions: {
           type: "array",
           items: { type: "string" },
@@ -423,6 +427,7 @@ const tools = [
         jumpProfile: { type: "string", description: "Profile name of the jump/bastion server to connect through first." },
         jumpUser: { type: "string", description: "User to switch to on the jump server (via sudo -n -u) before running the destination SSH. Use when keys for this target live on the jump server under a different user." },
         targetUser: { type: "string", description: "Override the destination SSH username when routing through a jumpProfile." },
+        localSwitchUser: { type: "string", description: "Switch to this local user (via sudo -n -u) before running SSH. Use when ssh-ops is running on a jump/bastion server and internal targets require a different local user for key access." },
         extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." }
       },
       required: ["name", "host"]
@@ -790,6 +795,7 @@ async function callTool(name, args) {
       jumpProfile: args.jumpProfile,
       jumpUser: args.jumpUser,
       targetUser: args.targetUser,
+      localSwitchUser: args.localSwitchUser,
       extraArgs: args.extraArgs
     });
     return textResult(JSON.stringify(profiles, null, 2));
