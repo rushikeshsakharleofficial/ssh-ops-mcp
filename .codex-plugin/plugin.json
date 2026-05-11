@@ -1,7 +1,7 @@
 {
   "name": "ssh-ops",
-  "version": "1.11.0",
-  "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, cron CRUD, dynamic profile management, encrypted passwords, and SSH -J jump chain management.",
+  "version": "1.12.0",
+  "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, cron CRUD, user management, permissions, sudoers, dynamic profile management, encrypted passwords, and SSH -J jump chain management.",
   "author": {
     "name": "Rushikesh Sakharle",
     "url": "https://github.com/rushikeshsakharleofficial"
@@ -24,8 +24,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SSH Ops",
-    "shortDescription": "24 SSH tools: inventory, files, services, packages, cron, network, IP assignment, IP groups, profiles, jump chain.",
-    "longDescription": "SSH Ops exposes 21 MCP tools for remote Linux server operations: hardware inventory, health checks, disk reports, log search, network probing, file read/write/patch (binary-safe), systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, parallel multi-host execution, IP address assignment (permanent, all network stacks), dynamic profile management with AES-256-GCM encrypted passwords, SSH -J jump chain management, and SSH key discovery.",
+    "shortDescription": "27 SSH tools: inventory, files, services, packages, cron, users, permissions, sudoers, network, IP assignment, profiles, jump chain.",
+    "longDescription": "SSH Ops exposes 27 MCP tools for remote Linux server operations: hardware inventory, health checks, disk reports, log search, network probing, file read/write/patch (binary-safe), systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, user management (add/del/mod/passwd/lock), chmod+chown+chgrp, sudoers management via /etc/sudoers.d/, parallel multi-host execution, IP address assignment (permanent, all network stacks), dynamic profile management with AES-256-GCM encrypted passwords, SSH -J jump chain management, localSwitchUser for bastion-local execution, and SSH key discovery.",
     "developerName": "Rushikesh Sakharle",
     "category": "Productivity",
     "capabilities": [
