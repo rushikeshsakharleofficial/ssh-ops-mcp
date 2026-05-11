@@ -4,7 +4,12 @@ import {
   addProfile,
   cronScript,
   ipAssignScript,
+  listIpGroups,
   listLocalSshKeys,
+  parseYamlConfig,
+  removeIpGroup,
+  resolveIpGroup,
+  saveIpGroup,
   diskReportScript,
   filePatchScript,
   fileReadScript,
@@ -481,22 +486,24 @@ const tools = [
   {
     name: "ssh_ip_assign",
     title: "Assign IP Addresses",
-    description: "Assign one or more IP addresses to a network interface on a remote host. Applies immediately via `ip addr add` AND persists across reboots. Auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) or override with `method`. Always runs as sudo. CONFIRM with user before calling.",
+    description: "Assign one or more IP addresses to a network interface on a remote host. Applies immediately via `ip addr add` AND persists across reboots. Auto-detects the network manager (netplan → NetworkManager → network-scripts → systemd-networkd → rc.local) or override with `method`. Accept ips array, a named group (group param), or a local JSON/YAML file (fromFile param). Always runs as sudo. CONFIRM with user before calling.",
     inputSchema: {
       type: "object",
       properties: {
         target: { type: "string", description: "Profile or user@host." },
-        iface: { type: "string", description: "Network interface name, e.g. eth0, ens3, enp0s3." },
+        iface: { type: "string", description: "Network interface name, e.g. eth0, ens3, enp0s3. Can be omitted when group or fromFile defines it." },
         ips: {
           type: "array",
           items: { type: "string" },
-          description: "IP addresses in CIDR notation, e.g. [\"192.168.1.100/24\", \"10.0.0.5/24\"]."
+          description: "IP addresses in CIDR notation. Mutually exclusive with group/fromFile."
         },
-        gateway: { type: "string", description: "Optional default gateway IP." },
+        group: { type: "string", description: "Name of a saved IP group (from ssh_save_ip_group). Resolves ips, iface, gateway, dns from the group." },
+        fromFile: { type: "string", description: "Path to a local JSON or YAML file containing {iface, ips, gateway?, dns?}. Loaded by the MCP server before running." },
+        gateway: { type: "string", description: "Optional default gateway IP. Overrides group/file value." },
         dns: {
           type: "array",
           items: { type: "string" },
-          description: "Optional DNS server IPs."
+          description: "Optional DNS server IPs. Overrides group/file value."
         },
         method: {
           type: "string",
@@ -504,8 +511,44 @@ const tools = [
           description: "Persistence method. Default auto-detects from the running system."
         },
         timeoutMs: { type: "number", description: "Timeout ms. Default 60000." }
+      }
+    }
+  },
+  {
+    name: "ssh_save_ip_group",
+    title: "Save IP Group",
+    description: "Save a named set of IPs (with optional iface, gateway, dns) to the dynamic config. Reference it later with ssh_ip_assign(group='name') instead of repeating the IP list every time.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Group name (alphanumeric, hyphens, underscores)." },
+        ips: { type: "array", items: { type: "string" }, description: "IP addresses in CIDR notation." },
+        iface: { type: "string", description: "Default interface for this group." },
+        gateway: { type: "string", description: "Default gateway." },
+        dns: { type: "array", items: { type: "string" }, description: "Default DNS servers." }
       },
-      required: ["iface", "ips"]
+      required: ["name", "ips"]
+    }
+  },
+  {
+    name: "ssh_remove_ip_group",
+    title: "Remove IP Group",
+    description: "Remove a saved IP group from the dynamic config.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Group name to remove." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "ssh_list_ip_groups",
+    title: "List IP Groups",
+    description: "List all saved IP groups and their contents. Does not connect to any host.",
+    inputSchema: {
+      type: "object",
+      properties: {}
     }
   }
 ];
@@ -717,11 +760,37 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_ip_assign") {
+    let resolved = { iface: args.iface, ips: args.ips, gateway: args.gateway, dns: args.dns };
+
+    if (args.group) {
+      const g = resolveIpGroup(args.group);
+      resolved = { iface: g.iface, ips: g.ips, gateway: g.gateway, dns: g.dns, ...resolved };
+    } else if (args.fromFile) {
+      let raw;
+      try { raw = readFileSync(args.fromFile, "utf8"); } catch (e) {
+        return textResult(`Cannot read file: ${args.fromFile} — ${e.message}`, true);
+      }
+      let parsed;
+      try {
+        parsed = args.fromFile.match(/\.ya?ml$/i)
+          ? parseYamlConfig(raw)
+          : JSON.parse(raw);
+      } catch (e) {
+        return textResult(`Failed to parse ${args.fromFile}: ${e.message}`, true);
+      }
+      resolved = { ...parsed, ...resolved };
+    }
+
+    if (!resolved.ips || resolved.ips.length === 0)
+      return textResult("ips is required — provide ips array, group, or fromFile.", true);
+    if (!resolved.iface)
+      return textResult("iface is required — provide it directly, in the group, or in fromFile.", true);
+
     const command = ipAssignScript({
-      iface: args.iface,
-      ips: args.ips,
-      gateway: args.gateway,
-      dns: args.dns,
+      iface: resolved.iface,
+      ips: resolved.ips,
+      gateway: resolved.gateway,
+      dns: resolved.dns,
       method: args.method || "auto"
     });
     const result = await runSshCommand({
@@ -732,6 +801,25 @@ async function callTool(name, args) {
       timeoutMs: args.timeoutMs || 60_000
     });
     return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_save_ip_group") {
+    const groups = saveIpGroup(args.name, {
+      iface: args.iface,
+      ips: args.ips,
+      gateway: args.gateway,
+      dns: args.dns
+    });
+    return textResult(JSON.stringify(groups, null, 2));
+  }
+
+  if (name === "ssh_remove_ip_group") {
+    const groups = removeIpGroup(args.name);
+    return textResult(JSON.stringify(groups, null, 2));
+  }
+
+  if (name === "ssh_list_ip_groups") {
+    return textResult(JSON.stringify(listIpGroups(), null, 2));
   }
 
   return textResult(`Unknown tool: ${name}`, true);

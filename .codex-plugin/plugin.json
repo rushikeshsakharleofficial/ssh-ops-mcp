@@ -1,6 +1,6 @@
 {
   "name": "ssh-ops",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, cron CRUD, dynamic profile management, encrypted passwords, and SSH -J jump chain management.",
   "author": {
     "name": "Rushikesh Sakharle",
@@ -24,7 +24,7 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SSH Ops",
-    "shortDescription": "21 SSH tools: inventory, files, services, packages, cron, network, IP assignment, profiles, jump chain.",
+    "shortDescription": "24 SSH tools: inventory, files, services, packages, cron, network, IP assignment, IP groups, profiles, jump chain.",
     "longDescription": "SSH Ops exposes 21 MCP tools for remote Linux server operations: hardware inventory, health checks, disk reports, log search, network probing, file read/write/patch (binary-safe), systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, parallel multi-host execution, IP address assignment (permanent, all network stacks), dynamic profile management with AES-256-GCM encrypted passwords, SSH -J jump chain management, and SSH key discovery.",
     "developerName": "Rushikesh Sakharle",
     "category": "Productivity",

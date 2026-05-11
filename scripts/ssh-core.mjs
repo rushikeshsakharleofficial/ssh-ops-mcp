@@ -183,7 +183,7 @@ function parseConfigFile(configPath) {
   return JSON.parse(source);
 }
 
-function parseYamlConfig(source) {
+export function parseYamlConfig(source) {
   const root = {};
   const stack = [{ indent: -1, value: root }];
 
@@ -406,6 +406,52 @@ export function removeJumpServer(name) {
   _configCache = null;
   _configCacheTime = 0;
   return listJumpServers();
+}
+
+export function saveIpGroup(name, { iface, ips, gateway, dns } = {}) {
+  if (!name || !/^[a-zA-Z0-9_-]+$/.test(name))
+    throw new Error(`Invalid group name "${name}". Use only letters, digits, hyphens, underscores.`);
+  if (!Array.isArray(ips) || ips.length === 0) throw new Error("ips array is required.");
+  for (const ip of ips) {
+    if (!/^[\d.a-fA-F:]+\/\d{1,3}$/.test(ip))
+      throw new Error(`Invalid CIDR: "${ip}". Use format like 192.168.1.100/24`);
+  }
+  let dynamic = { profiles: {}, defaults: {}, ipGroups: {} };
+  try { if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
+  dynamic.ipGroups = dynamic.ipGroups || {};
+  dynamic.ipGroups[name] = {
+    _addedAt: dynamic.ipGroups[name]?._addedAt || new Date().toISOString(),
+    _updatedAt: new Date().toISOString(),
+    ...(iface && { iface }),
+    ips,
+    ...(gateway && { gateway }),
+    ...(Array.isArray(dns) && dns.length && { dns })
+  };
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  return listIpGroups();
+}
+
+export function removeIpGroup(name) {
+  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`IP group "${name}" not found.`);
+  let dynamic = {};
+  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
+  if (!dynamic.ipGroups?.[name]) throw new Error(`IP group "${name}" not found in dynamic config.`);
+  delete dynamic.ipGroups[name];
+  if (Object.keys(dynamic.ipGroups).length === 0) delete dynamic.ipGroups;
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  return listIpGroups();
+}
+
+export function listIpGroups() {
+  let dynamic = {};
+  try { if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
+  return dynamic.ipGroups || {};
+}
+
+export function resolveIpGroup(name) {
+  const groups = listIpGroups();
+  if (!groups[name]) throw new Error(`IP group "${name}" not found. Use ssh_list_ip_groups to see available groups.`);
+  return groups[name];
 }
 
 export function resolveTarget(input = {}) {
@@ -1265,10 +1311,16 @@ case "$METHOD" in
   network-scripts)
     N=1
     for IP in "\${IPS[@]}"; do
+      IPADDR=\${IP%%/*}
+      # Check if this IP already exists in any alias file for this interface
+      _existing=$(grep -rl "IPADDR=$IPADDR$" /etc/sysconfig/network-scripts/ifcfg-$IFACE:* 2>/dev/null | head -1)
+      if [ -n "$_existing" ]; then
+        echo "  $IP already in $_existing -- skipped"
+        continue
+      fi
       while [ -f "/etc/sysconfig/network-scripts/ifcfg-$IFACE:$N" ]; do N=$((N+1)); done
       ALIAS="$IFACE:$N"
       ALIAS_FILE="/etc/sysconfig/network-scripts/ifcfg-$ALIAS"
-      IPADDR=\${IP%%/*}
       PREFIX=\${IP##*/}
       printf 'DEVICE="%s"\\nBOOTPROTO=none\\nONBOOT=yes\\nIPADDR=%s\\nPREFIX=%s\\n' \
         "$ALIAS" "$IPADDR" "$PREFIX" > "$ALIAS_FILE"

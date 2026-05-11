@@ -758,3 +758,39 @@ test("ipAssignScript includes gateway and DNS when provided", async () => {
   assert.ok(script.includes("8.8.8.8"), "should include first DNS");
   assert.ok(script.includes("1.1.1.1"), "should include second DNS");
 });
+
+test("saveIpGroup and listIpGroups round-trip", async () => {
+  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
+  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-group-${Date.now()}`;
+  const { saveIpGroup, removeIpGroup, listIpGroups } = await import(moduleUrl);
+  try {
+    const groups = saveIpGroup("test-web-cluster", {
+      iface: "eth0",
+      ips: ["10.0.0.100/24", "10.0.0.101/24"],
+      gateway: "10.0.0.1"
+    });
+    assert.ok(groups["test-web-cluster"], "group should exist after save");
+    assert.deepEqual(groups["test-web-cluster"].ips, ["10.0.0.100/24", "10.0.0.101/24"]);
+    assert.equal(groups["test-web-cluster"].iface, "eth0");
+    assert.equal(groups["test-web-cluster"].gateway, "10.0.0.1");
+  } finally {
+    if (existsSync(dynPath)) {
+      try { removeIpGroup("test-web-cluster"); } catch {}
+      const after = JSON.parse(rfs(dynPath, "utf8"));
+      if (Object.keys(after.profiles || {}).length === 0 && !after.ipGroups) unlinkSync(dynPath);
+    }
+  }
+});
+
+test("saveIpGroup throws on invalid name", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-group-badname-${Date.now()}`;
+  const { saveIpGroup } = await import(moduleUrl);
+  assert.throws(() => saveIpGroup("bad name!", { ips: ["10.0.0.1/24"] }), /invalid group name/i);
+});
+
+test("resolveIpGroup throws when group not found", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-group-notfound-${Date.now()}`;
+  const { resolveIpGroup } = await import(moduleUrl);
+  assert.throws(() => resolveIpGroup("nonexistent-group"), /not found/i);
+});

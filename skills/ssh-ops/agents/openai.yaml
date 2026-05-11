@@ -1,5 +1,5 @@
 display_name: SSH Ops
-short_description: 21 SSH tools for remote Linux server ops — inventory, files, services, packages, cron, network, IP assignment, profiles, jump chain.
+short_description: 24 SSH tools for remote Linux server ops — inventory, files, services, packages, cron, network, IP assignment with groups, profiles, jump chain.
 long_description: |
   SSH Ops provides 21 MCP tools for operating remote Linux servers over SSH.
   Covers hardware inventory, health checks, disk reports, log search, network
