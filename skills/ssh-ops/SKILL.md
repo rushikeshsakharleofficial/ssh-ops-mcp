@@ -12,8 +12,9 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_inventory`: OS/CPU/RAM/disk/network inventory
 - `ssh_disk_report`: disk/inode/container storage pressure
 - `ssh_health_report`: load/memory/disk/services/processes/docker snapshot
-- `ssh_file_read`: read remote file content
-- `ssh_file_write`: write remote file — CONFIRM with user before calling unless told to proceed automatically
+- `ssh_file_read`: read remote file; `encoding: base64` for binary files
+- `ssh_file_write`: write remote file; `encoding: base64` for binary — CONFIRM with user before calling unless told to proceed automatically
+- `ssh_file_patch`: edit remote file (line-range or regex) — CONFIRM with user before calling unless told to proceed automatically
 - `ssh_service`: systemd control — CONFIRM for start/stop/restart/enable/disable unless told automatically
 - `ssh_log_search`: search journal or log file by pattern
 
