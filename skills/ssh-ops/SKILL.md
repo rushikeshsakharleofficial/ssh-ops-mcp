@@ -64,6 +64,35 @@ Unknown IP/host → do NOT ask for credentials first:
 `localSwitchUser` per-profile: `ssh_add_profile(name="web1", host="10.0.1.10", localSwitchUser="relay")`
 Or globally in `defaults.localSwitchUser`.
 
+## Large output — export to local file
+
+When expected output > ~100 lines (user lists, log dumps, full inventories, bulk data):
+**Do NOT stream back through MCP** — wastes tokens and hits limits.
+
+Instead:
+1. `ssh_run` → pipe output to remote temp file:
+   ```
+   ssh_run(target=X, command="<cmd> > /tmp/ssh-ops-export.ext")
+   ```
+2. Pull to local via Bash scp:
+   ```bash
+   scp user@host:/tmp/ssh-ops-export.ext ~/Downloads/ssh-ops-export.ext
+   ```
+3. Tell user: "Saved to ~/Downloads/ssh-ops-export.ext — open to review."
+4. Clean up remote: `ssh_run(command="rm /tmp/ssh-ops-export.ext")`
+
+**Extension by situation:**
+
+| Data type | Extension |
+|-----------|-----------|
+| User/email lists, tables | `.csv` |
+| Logs, journal output | `.txt` |
+| JSON API / structured | `.json` |
+| Config file dumps | `.conf` / `.yaml` |
+| Mixed/unknown | `.txt` |
+
+**Trigger on:** "list all users", "export logs", "show all X", "dump config", any query where result set is unbounded or known large.
+
 ## Safety
 
 - `authFailed:true` → `ssh_list_keys` → update via `ssh_add_profile`/`ssh_add_jump`; creds reused silently until failure
