@@ -1369,6 +1369,81 @@ esac
 
 section "Current addresses on $IFACE"
 ip addr show dev "$IFACE"
+
+section "IP Verification"
+_all_ok=true
+for IP in "\${IPS[@]}"; do
+  IPADDR=\${IP%%/*}
+  echo "--- $IPADDR ---"
+
+  # Confirm IP is actually on the interface
+  if ! ip addr show dev "$IFACE" 2>/dev/null | grep -qF "$IPADDR"; then
+    echo "  FAIL  IP $IPADDR not found on $IFACE"
+    _all_ok=false
+    continue
+  fi
+  echo "  OK    $IPADDR is assigned to $IFACE"
+
+  # Classify public vs private
+  _private=false
+  _oct1=$(printf '%s' "$IPADDR" | cut -d. -f1)
+  _oct2=$(printf '%s' "$IPADDR" | cut -d. -f2)
+  case "$IPADDR" in
+    10.*|127.*|192.168.*|169.254.*|::1|fc*|fd*) _private=true ;;
+    172.*)
+      [ "$_oct2" -ge 16 ] && [ "$_oct2" -le 31 ] && _private=true ;;
+  esac
+
+  if $_private; then
+    echo "  INFO  Private IP"
+    if [ -n "$GATEWAY" ]; then
+      if ping -c 2 -W 3 -I "$IFACE" "$GATEWAY" >/dev/null 2>&1; then
+        echo "  OK    Gateway $GATEWAY reachable via $IFACE"
+      else
+        echo "  WARN  Gateway $GATEWAY unreachable via $IFACE (routing may need a moment)"
+        _all_ok=false
+      fi
+    else
+      echo "  SKIP  No gateway configured"
+    fi
+    # LAN reachability: try to ping self via interface loopback
+    if ping -c 1 -W 2 "$IPADDR" >/dev/null 2>&1; then
+      echo "  OK    $IPADDR responds to ping"
+    else
+      echo "  WARN  $IPADDR does not respond to ping (firewall or ICMP blocked)"
+    fi
+  else
+    echo "  INFO  Public IP"
+    # Ping internet via this source IP
+    if ping -c 3 -W 4 -I "$IPADDR" 8.8.8.8 >/dev/null 2>&1; then
+      echo "  OK    Internet reachable from $IPADDR (ping 8.8.8.8)"
+    else
+      echo "  FAIL  Internet NOT reachable from $IPADDR (check routing/firewall)"
+      _all_ok=false
+    fi
+    # Verify actual outbound IP matches assigned IP
+    if command -v curl >/dev/null 2>&1; then
+      _outbound=$(curl --interface "$IPADDR" -s --max-time 6 https://api.ipify.org 2>/dev/null || true)
+      if [ "$_outbound" = "$IPADDR" ]; then
+        echo "  OK    Outbound internet IP confirmed: $_outbound"
+      elif [ -n "$_outbound" ]; then
+        echo "  WARN  Outbound IP is $_outbound — traffic not leaving via $IPADDR (check default route)"
+        _all_ok=false
+      else
+        echo "  WARN  Could not confirm outbound IP (curl failed — may still work)"
+      fi
+    else
+      echo "  SKIP  curl not installed — outbound IP check skipped"
+    fi
+  fi
+done
+
+echo ""
+if $_all_ok; then
+  echo "Verification: ALL PASSED"
+else
+  echo "Verification: SOME CHECKS FAILED — review output above"
+fi
 `;
 }
 
