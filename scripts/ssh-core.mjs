@@ -534,6 +534,23 @@ export function fileReadScript(path, maxBytes = 51200) {
   return `set +e\nhead -c ${safeMax} ${shellQuote(String(path))}\n`;
 }
 
+export function fileWriteScript(path, content, { backup = true, sudo = false } = {}) {
+  const safeContent = content.replace(/\r\n/g, "\n");
+  const delimiter = uniqueHeredocDelimiter(safeContent, "SSH_OPS_WRITE");
+  const parts = [
+    "set +e",
+    `_f=${shellQuote(String(path))}`
+  ];
+  if (backup) {
+    parts.push(`cp "$_f" "$_f.bak.$(date +%s)" 2>/dev/null || true`);
+  }
+  const target = sudo ? `sudo tee "$_f" > /dev/null` : `cat > "$_f"`;
+  parts.push(`${target} <<'${delimiter}'`);
+  parts.push(safeContent.trimEnd());
+  parts.push(delimiter);
+  return parts.join("\n") + "\n";
+}
+
 export function formatRunResult(result) {
   const lines = [];
   lines.push(`target: ${result.targetLabel || result.target}`);

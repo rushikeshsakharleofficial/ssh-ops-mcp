@@ -240,3 +240,26 @@ test("fileReadScript defaults to 51200 bytes", async () => {
   const script = fileReadScript("/var/log/syslog");
   assert.ok(script.includes("head -c 51200"), "should use default 51200 bytes");
 });
+
+test("fileWriteScript includes backup cp and content by default", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-write-backup-${Date.now()}`;
+  const { fileWriteScript } = await import(moduleUrl);
+  const script = fileWriteScript("/etc/hosts", "127.0.0.1 localhost\n");
+  assert.ok(script.includes("cp "), "should contain cp for backup");
+  assert.ok(script.includes(".bak."), "should produce .bak. timestamped backup");
+  assert.ok(script.includes("127.0.0.1 localhost"), "should embed content");
+});
+
+test("fileWriteScript skips backup when backup: false", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-write-no-backup-${Date.now()}`;
+  const { fileWriteScript } = await import(moduleUrl);
+  const script = fileWriteScript("/etc/hosts", "content", { backup: false });
+  assert.ok(!script.includes("cp "), "should not contain cp when backup disabled");
+});
+
+test("fileWriteScript uses sudo tee when sudo: true", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-write-sudo-${Date.now()}`;
+  const { fileWriteScript } = await import(moduleUrl);
+  const script = fileWriteScript("/etc/nginx/nginx.conf", "worker_processes 1;", { sudo: true });
+  assert.ok(script.includes("sudo tee"), "should use sudo tee");
+});
