@@ -1,6 +1,6 @@
 ---
 name: ssh-ops
-description: Use SSH Ops when inspecting, changing, or running commands on remote SSH servers. Covers inventory, health, disk, file read/write, service control, and log search.
+description: Use SSH Ops when inspecting, changing, or running commands on remote SSH servers. Covers inventory, health, disk, log search, network checks, multi-host execution, file read/write/patch (binary-safe), service control, package management, and cron CRUD.
 ---
 
 # SSH Ops
@@ -47,5 +47,5 @@ Config defaults with `jumpProfile`, `jumpUser`, `targetUser` route non-jump targ
 
 - Read-only tools first for inventory/health/log checks.
 - `sudo` uses `sudo -n` — fails instead of prompting.
-- **CONFIRM with user before `ssh_file_write`** and before `ssh_service` write actions unless user says to proceed automatically.
+- **CONFIRM with user before write actions** unless user says to proceed automatically: `ssh_file_write`, `ssh_file_patch`, `ssh_service` (start/stop/restart/enable/disable), `ssh_package` (install/remove/update/upgrade), `ssh_cron` (add/remove).
 - Summarize findings after tool execution; skip raw output walls unless asked.
