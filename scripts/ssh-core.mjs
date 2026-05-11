@@ -607,6 +607,8 @@ export function filePatchScript(path, {
     parts.push(`} > "$_f.tmp" && ${sudoMv} "$_f.tmp" "$_f"`);
   } else {
     const sudoMv = sudo ? "sudo mv" : "mv";
+    parts.push(`export SSH_OPS_PATTERN=${shellQuote(String(pattern))}`);
+    parts.push(`export SSH_OPS_REPLACEMENT=${shellQuote(String(replacement))}`);
     parts.push(`sed -E "s|$SSH_OPS_PATTERN|$SSH_OPS_REPLACEMENT|${flags}" "$_f" > "$_f.tmp" && ${sudoMv} "$_f.tmp" "$_f"`);
   }
 
