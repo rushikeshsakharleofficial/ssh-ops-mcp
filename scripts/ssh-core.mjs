@@ -530,14 +530,15 @@ command -v docker >/dev/null 2>&1 && sudo -n docker ps --format 'table {{.Names}
 `;
 }
 
-export function fileReadScript(path, maxBytes = 51200) {
+export function fileReadScript(path, maxBytes = 51200, encoding = "text") {
+  if (encoding === "base64") {
+    return `set +e\nbase64 ${shellQuote(String(path))}\n`;
+  }
   const safeMax = Math.max(1, Number(maxBytes) || 51200);
   return `set +e\nhead -c ${safeMax} ${shellQuote(String(path))}\n`;
 }
 
-export function fileWriteScript(path, content, { backup = true, sudo = false } = {}) {
-  const safeContent = content.replace(/\r\n/g, "\n");
-  const delimiter = uniqueHeredocDelimiter(safeContent, "SSH_OPS_WRITE");
+export function fileWriteScript(path, content, { backup = true, sudo = false, encoding = "text" } = {}) {
   const parts = [
     "set +e",
     `_f=${shellQuote(String(path))}`
@@ -545,10 +546,70 @@ export function fileWriteScript(path, content, { backup = true, sudo = false } =
   if (backup) {
     parts.push(`cp "$_f" "$_f.bak.$(date +%s)" 2>/dev/null || true`);
   }
+  if (encoding === "base64") {
+    const writer = sudo ? `base64 -d | sudo tee "$_f" > /dev/null` : `base64 -d > "$_f"`;
+    parts.push(`${writer} <<'SSH_OPS_B64'`);
+    parts.push(String(content).replace(/\r\n/g, "\n").trimEnd());
+    parts.push("SSH_OPS_B64");
+    return parts.join("\n") + "\n";
+  }
+  const safeContent = content.replace(/\r\n/g, "\n");
+  const delimiter = uniqueHeredocDelimiter(safeContent, "SSH_OPS_WRITE");
   const target = sudo ? `sudo tee "$_f" > /dev/null` : `cat > "$_f"`;
   parts.push(`${target} <<'${delimiter}'`);
   parts.push(safeContent.trimEnd());
   parts.push(delimiter);
+  return parts.join("\n") + "\n";
+}
+
+export function filePatchScript(path, {
+  startLine, endLine, content = "",
+  pattern, replacement = "", flags = "g",
+  backup = true, sudo = false
+} = {}) {
+  if (startLine !== undefined && pattern !== undefined) {
+    throw new Error("Provide startLine or pattern, not both.");
+  }
+  if (endLine !== undefined && startLine === undefined) {
+    throw new Error("endLine requires startLine.");
+  }
+  if (startLine === undefined && pattern === undefined) {
+    throw new Error("Provide startLine or pattern.");
+  }
+  if (startLine !== undefined && startLine < 1) {
+    throw new Error("startLine must be >= 1.");
+  }
+  const resolvedEnd = endLine !== undefined ? endLine : startLine;
+  if (startLine !== undefined && resolvedEnd < startLine) {
+    throw new Error("endLine must be >= startLine.");
+  }
+  if (!/^[a-zA-Z]*$/.test(flags)) {
+    throw new Error("flags must be letters only.");
+  }
+
+  const parts = ["set +e", `_f=${shellQuote(String(path))}`];
+  if (backup) {
+    parts.push(`cp "$_f" "$_f.bak.$(date +%s)" 2>/dev/null || true`);
+  }
+
+  if (startLine !== undefined) {
+    const safeContent = String(content).replace(/\r\n/g, "\n");
+    const delimiter = uniqueHeredocDelimiter(safeContent, "SSH_OPS_PATCH");
+    const sudoMv = sudo ? "sudo mv" : "mv";
+    parts.push(`{`);
+    parts.push(`  head -n $((${startLine} - 1)) "$_f"`);
+    if (safeContent.trimEnd()) {
+      parts.push(`  cat <<'${delimiter}'`);
+      parts.push(safeContent.trimEnd());
+      parts.push(delimiter);
+    }
+    parts.push(`  tail -n +$((${resolvedEnd} + 1)) "$_f"`);
+    parts.push(`} > "$_f.tmp" && ${sudoMv} "$_f.tmp" "$_f"`);
+  } else {
+    const sudoMv = sudo ? "sudo mv" : "mv";
+    parts.push(`sed -E "s|$SSH_OPS_PATTERN|$SSH_OPS_REPLACEMENT|${flags}" "$_f" > "$_f.tmp" && ${sudoMv} "$_f.tmp" "$_f"`);
+  }
+
   return parts.join("\n") + "\n";
 }
 

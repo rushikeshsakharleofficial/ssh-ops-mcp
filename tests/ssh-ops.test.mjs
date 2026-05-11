@@ -345,3 +345,48 @@ test("resolveTarget merges access:sudo from profile into options", async () => {
     }
   }
 });
+
+test("fileReadScript with encoding base64 returns base64 command not head", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-read-b64-${Date.now()}`;
+  const { fileReadScript } = await import(moduleUrl);
+  const script = fileReadScript("/etc/ssl/cert.pem", 51200, "base64");
+  assert.ok(script.includes("base64"), "should use base64 command");
+  assert.ok(!script.includes("head"), "should not use head");
+  assert.ok(script.includes("'/etc/ssl/cert.pem'"), "should include shell-quoted path");
+});
+
+test("fileWriteScript with encoding base64 uses base64 -d and preserves backup", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=file-write-b64-${Date.now()}`;
+  const { fileWriteScript } = await import(moduleUrl);
+  const script = fileWriteScript("/tmp/test.bin", "SGVsbG8=", { encoding: "base64" });
+  assert.ok(script.includes("base64 -d"), "should use base64 -d decoder");
+  assert.ok(script.includes("SGVsbG8="), "should contain base64 content in heredoc");
+  assert.ok(script.includes(".bak."), "should backup by default");
+});
+
+test("filePatchScript throws when both startLine and pattern provided", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=patch-both-${Date.now()}`;
+  const { filePatchScript } = await import(moduleUrl);
+  assert.throws(
+    () => filePatchScript("/etc/hosts", { startLine: 1, pattern: "foo" }),
+    /Provide startLine or pattern, not both\./
+  );
+});
+
+test("filePatchScript throws when neither startLine nor pattern provided", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=patch-neither-${Date.now()}`;
+  const { filePatchScript } = await import(moduleUrl);
+  assert.throws(
+    () => filePatchScript("/etc/hosts", {}),
+    /Provide startLine or pattern\./
+  );
+});
+
+test("filePatchScript throws when endLine provided without startLine", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=patch-endonly-${Date.now()}`;
+  const { filePatchScript } = await import(moduleUrl);
+  assert.throws(
+    () => filePatchScript("/etc/hosts", { endLine: 5 }),
+    /endLine requires startLine\./
+  );
+});
