@@ -17,32 +17,61 @@ Write-Host
 Write-Host "  SSH Ops Installer" -ForegroundColor Cyan
 Write-Host "  Installing to: $Dir" -ForegroundColor DarkGray
 
+# ── Helper: install a package via available manager ───────────────────────────
+function InstallPkg {
+    param([string]$Choco, [string]$Scoop = $Choco, [string]$Winget = "")
+    if     (Has "choco")  { choco install $Choco -y --no-progress 2>&1 | Out-Null }
+    elseif (Has "scoop")  { scoop install $Scoop 2>&1 | Out-Null }
+    elseif ($Winget -and (Has "winget")) { winget install --id $Winget --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null }
+}
+
+function RefreshPath {
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("PATH","User")
+}
+
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
 Step "Checking dependencies"
 
+# ssh client — required for all SSH operations
+if (-not (Has "ssh")) {
+    Warn "ssh not found — enabling Windows OpenSSH client"
+    Add-WindowsCapability -Online -Name OpenSSH.Client* 2>&1 | Out-Null
+    if (Has "ssh") { Ok "ssh installed (Windows OpenSSH)" }
+    else { Warn "Could not auto-install ssh — install OpenSSH client manually" }
+} else { Ok "ssh $(ssh -V 2>&1 | Select-String 'OpenSSH' | Select-Object -First 1)" }
+
+# node — required for MCP server
 if (-not (Has "node")) {
     Warn "node not found — installing"
-    if     (Has "winget") { winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements }
-    elseif (Has "choco")  { choco install nodejs-lts -y --no-progress }
-    elseif (Has "scoop")  { scoop install nodejs-lts }
+    if     (Has "winget") { winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null }
+    elseif (Has "choco")  { choco install nodejs-lts -y --no-progress 2>&1 | Out-Null }
+    elseif (Has "scoop")  { scoop install nodejs-lts 2>&1 | Out-Null }
     else   { Err "Cannot auto-install Node.js. Install from https://nodejs.org and retry."; exit 1 }
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("PATH","User")
+    RefreshPath
     if (-not (Has "node")) { Err "Node.js installed but not on PATH — restart terminal and re-run."; exit 1 }
     Ok "Node.js $(node --version) installed"
 } else { Ok "node $(node --version)" }
 
+# claude CLI — required for Claude Code MCP registration
 if (-not (Has "claude")) {
     Warn "claude CLI not found — installing"
-    npm install -g @anthropic-ai/claude-code --silent
-    Ok "claude CLI installed"
+    npm install -g @anthropic-ai/claude-code --silent 2>&1 | Out-Null
+    if (Has "claude") { Ok "claude CLI installed" } else { Warn "claude CLI install failed — Claude Code registration may fail" }
 } else { Ok "claude CLI found" }
 
+# sshpass — optional, needed for password-based SSH profiles
 if (-not (Has "sshpass")) {
-    Warn "sshpass not found — password-based SSH profiles will not work"
-    Info "Install via: choco install sshpass  or  scoop install sshpass"
+    Warn "sshpass not found — installing (needed for password-based SSH profiles)"
+    InstallPkg "sshpass" "sshpass"
+    RefreshPath
+    if (Has "sshpass") { Ok "sshpass installed" }
+    else { Warn "sshpass could not be auto-installed — install manually: choco install sshpass" }
 } else { Ok "sshpass found" }
+
+# git — optional
+if (Has "git") { Ok "git $(git --version)" } else { Skip "git not found — optional" }
 
 # ── Download files ─────────────────────────────────────────────────────────────
 

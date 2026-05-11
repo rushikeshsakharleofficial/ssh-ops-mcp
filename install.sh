@@ -29,38 +29,104 @@ echo
 echo "${bold}${cyan}  SSH Ops Installer${reset}"
 echo "${dim}  Installing to: $DIR${reset}"
 
+# ── Detect OS / package manager ───────────────────────────────────────────────
+
+_os="$(uname -s)"
+_pm=""
+if   has apt-get;  then _pm="apt"
+elif has dnf;      then _pm="dnf"
+elif has yum;      then _pm="yum"
+elif has apk;      then _pm="apk"
+elif has brew;     then _pm="brew"
+elif has pacman;   then _pm="pacman"
+elif has zypper;   then _pm="zypper"
+fi
+
+_install_pkg() {
+  local pkg="$1" brew_pkg="${2:-$1}"
+  warn "$pkg not found — installing"
+  case "$_pm" in
+    apt)    sudo apt-get install -y -qq "$pkg" >/dev/null 2>&1 ;;
+    dnf)    sudo dnf install -y -q "$pkg" >/dev/null 2>&1 ;;
+    yum)    sudo yum install -y -q "$pkg" >/dev/null 2>&1 ;;
+    apk)    sudo apk add --quiet "$pkg" >/dev/null 2>&1 ;;
+    brew)   brew install "$brew_pkg" >/dev/null 2>&1 ;;
+    pacman) sudo pacman -S --noconfirm --quiet "$pkg" >/dev/null 2>&1 ;;
+    zypper) sudo zypper install -y "$pkg" >/dev/null 2>&1 ;;
+    *)      return 1 ;;
+  esac
+}
+
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
 step "Checking dependencies"
 
+# curl — required for downloading files
 if ! has curl; then
-  err "curl not found — install it and retry." >&2; exit 1
+  _install_pkg curl || { err "curl not found and could not be installed. Install curl and retry." >&2; exit 1; }
+  has curl && ok "curl $(curl --version | head -1)" || { err "curl install failed." >&2; exit 1; }
+else
+  ok "curl $(curl --version | head -1 | cut -d' ' -f1-2)"
 fi
 
+# ssh — required for all SSH operations
+if ! has ssh; then
+  _install_pkg openssh-client openssh && ok "ssh installed" \
+    || { err "ssh not found and could not be installed. Install openssh-client and retry." >&2; exit 1; }
+else
+  ok "ssh $(ssh -V 2>&1 | head -1)"
+fi
+
+# node — required for MCP server
 if ! has node; then
   warn "node not found — installing via nvm"
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
   [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
   nvm install --lts --no-progress
-  ok "Node.js $(node --version) installed"
+  has node && ok "Node.js $(node --version) installed" \
+    || { err "Node.js install failed. Install from https://nodejs.org and retry." >&2; exit 1; }
 else
   ok "node $(node --version)"
 fi
 
+# claude CLI — required for Claude Code MCP registration
 if ! has claude; then
   warn "claude CLI not found — installing"
   npm install -g @anthropic-ai/claude-code --quiet
-  ok "claude CLI installed"
+  has claude && ok "claude CLI installed" || warn "claude CLI install failed — Claude Code registration may fail"
 else
   ok "claude $(claude --version 2>/dev/null | head -1 || true)"
 fi
 
+# sshpass — optional, needed for password-based SSH profiles
 if ! has sshpass; then
-  warn "sshpass not found — password-based SSH profiles will not work"
-  info "Install: apt install sshpass  /  brew install sshpass  /  yum install sshpass"
+  warn "sshpass not found — installing (needed for password-based SSH profiles)"
+  _sshpass_ok=false
+  case "$_pm" in
+    apt)    sudo apt-get install -y -qq sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    dnf)    sudo dnf install -y -q sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    yum)    sudo yum install -y -q sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    apk)    sudo apk add --quiet sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    brew)   brew install hudochenkov/sshpass/sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    pacman) sudo pacman -S --noconfirm sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+    zypper) sudo zypper install -y sshpass >/dev/null 2>&1 && _sshpass_ok=true ;;
+  esac
+  if $_sshpass_ok && has sshpass; then
+    ok "sshpass installed"
+  else
+    warn "sshpass could not be auto-installed — install manually for password auth"
+    info "  apt install sshpass  /  brew install hudochenkov/sshpass/sshpass  /  yum install sshpass"
+  fi
 else
   ok "sshpass $(sshpass -V 2>&1 | head -1 || true)"
+fi
+
+# git — optional, used by some IDE plugins
+if has git; then
+  ok "git $(git --version | cut -d' ' -f3)"
+else
+  skip "git not found — optional, some IDE features may be limited"
 fi
 
 # ── Download files ─────────────────────────────────────────────────────────────
