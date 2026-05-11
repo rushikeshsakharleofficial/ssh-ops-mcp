@@ -2,27 +2,26 @@
 
 SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works as a plugin for **Claude Code** and **Codex**. Uses your local `ssh` binary, existing keys, and SSH config. Does not store passwords or private keys.
 
-## One-Click Install
-
-### Claude Code
+## Install
 
 ```bash
-git clone https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git
-cd ssh-ops-mcp
-claude mcp add ssh-ops node ./scripts/ssh-mcp-server.mjs
+curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
 ```
 
-Then configure your targets (see [Configure](#configure)) and start a new Claude Code session — the tools are live.
+Clones the repo to `~/.local/share/ssh-ops-mcp`, registers the MCP server with Claude Code, symlinks into the Codex plugins directory, and creates a starter config. Restart your session after running.
 
-> **Prerequisite:** Node.js on your PATH.
+**Prerequisites:** `git` and `node` on your PATH.
 
-### Codex
-
+**Custom install location:**
 ```bash
-git clone https://github.com/rushikeshsakharleofficial/ssh-ops-mcp.git
+SSH_OPS_DIR=~/tools/ssh-ops curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
 ```
 
-Move or symlink the cloned folder into your Codex plugins directory. Codex reads `.codex-plugin/plugin.json` and `.mcp.json` automatically — no extra steps.
+**Update:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash
+```
+Re-running does a `git pull` on the existing installation.
 
 ---
 
