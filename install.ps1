@@ -123,14 +123,13 @@ $InstalledJson = "$ClaudePlugins\installed_plugins.json"
 if (Test-Path "$env:USERPROFILE\.claude") {
     New-Item -ItemType Directory -Force -Path "$PluginCache\skills\ssh-ops" | Out-Null
 
-    # CLAUDE.md
+    # CLAUDE.md — auto-loads skill content into context when plugin is active
     @'
 # SSH Ops Skill
 
 Use the `ssh-ops` skill when the user wants to connect to remote SSH servers, run commands, manage files, check health/disk/logs, assign IPs, or manage server profiles and jump chains.
 
-## Available Skills
-- `ssh-ops:ssh-ops` — full SSH Ops tool reference and usage guidance
+@./skills/ssh-ops/SKILL.md
 '@ | Set-Content "$PluginCache\CLAUDE.md" -Encoding UTF8
 
     # Copy SKILL.md
