@@ -49,6 +49,20 @@ node scripts/ssh-ops.mjs run <target> 'hostname; uptime'
 - Profile name from `ssh-ops.config.yaml`, `~/.ssh/ssh-ops.yaml`, or compatible JSON.
 - Raw SSH target: `user@server.example.com` or `server.example.com`.
 
+## New IP / unknown server — auto-try default login
+
+When the user gives an IP or hostname that is NOT in `ssh_profiles`:
+
+1. Call `ssh_profiles` to check existing profiles and note the current jump chain / commonUser.
+2. **Try connecting immediately** using the same method as existing profiles — do NOT ask for credentials first:
+   - If profiles use `jumpProfile` + `jumpUser` → try `ssh_run(host=<IP>, user=<commonUser or root>, jumpProfile=<existingJump>, jumpUser=<existingJumpUser>, command="hostname && uptime")`
+   - If profiles use `jumpChain` → try `ssh_run(host=<IP>, user=<commonUser or root>, command="hostname && uptime")`
+   - If profiles connect directly → try `ssh_run(host=<IP>, user=<commonUser or root>, command="hostname && uptime")`
+3. If connection succeeds → save as profile with `ssh_add_profile`, then proceed with the requested task.
+4. If connection fails → report the error and ask the user for the correct user/key/jump method.
+
+**Never ask "do you want me to connect?" — just try using the default method and report what happened.**
+
 ## Two-Hop Jump Routing
 
 Config defaults with `jumpProfile`, `jumpUser`, `targetUser` route non-jump targets as nested SSH:

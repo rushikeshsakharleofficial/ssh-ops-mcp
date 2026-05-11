@@ -184,24 +184,63 @@ Use the `ssh-ops` skill when the user wants to connect to remote SSH servers, ru
 - `ssh-ops:ssh-ops` — full SSH Ops tool reference and usage guidance
 CLAUDEMD
 
-  # gemini-extension.json — loaded by Gemini CLI
-  VERSION_TAG=$(cat "$DIR/VERSION" 2>/dev/null || echo "latest")
-  cat > "$PLUGIN_CACHE/gemini-extension.json" << GEMEXT
-{
-  "name": "ssh-ops",
-  "description": "24 SSH tools for remote Linux server ops — inventory, health, disk, files, services, packages, cron, IP assignment, jump chains, and dynamic profile management.",
-  "version": "$VERSION_TAG",
-  "contextFileName": "GEMINI.md"
-}
-GEMEXT
-
-  # GEMINI.md — loaded by Gemini CLI
-  cat > "$PLUGIN_CACHE/GEMINI.md" << 'GEMINIMD'
-@./skills/ssh-ops/SKILL.md
-GEMINIMD
-
   # Copy SKILL.md into plugin
   cp "$DIR/skills/ssh-ops/SKILL.md" "$PLUGIN_CACHE/skills/ssh-ops/SKILL.md"
+
+  # Build ssh-ops.skill ZIP archive (required by Claude Code skill discovery)
+  if has zip; then
+    _tmp_skill=$(mktemp -d)
+    mkdir -p "$_tmp_skill/ssh-ops"
+    cp "$DIR/skills/ssh-ops/SKILL.md" "$_tmp_skill/ssh-ops/SKILL.md"
+    (cd "$_tmp_skill" && zip -q -r "$PLUGIN_CACHE/ssh-ops.skill" ssh-ops/)
+    rm -rf "$_tmp_skill"
+  else
+    # Fallback: node-based zip using built-in zlib (basic store, no compression)
+    node -e "
+      const fs = require('fs'), path = require('path');
+      const skill = fs.readFileSync('$DIR/skills/ssh-ops/SKILL.md');
+      const name = 'ssh-ops/SKILL.md';
+      const buf = Buffer.alloc(30 + name.length + skill.length + 46 + name.length + 22);
+      let o = 0;
+      // Local file header
+      buf.writeUInt32LE(0x04034b50, o); o+=4; // signature
+      buf.writeUInt16LE(20, o); o+=2;  // version needed
+      buf.writeUInt16LE(0, o); o+=2;   // flags
+      buf.writeUInt16LE(0, o); o+=2;   // compression: store
+      buf.writeUInt32LE(0, o); o+=4;   // mod time/date
+      // CRC32 placeholder
+      const crc = skill.reduce((c,b) => { for(let i=0;i<8;i++){const mix=(c^b)&1;c=(c>>>1)^(mix?0xEDB88320:0);b>>=1;}return c>>>0; }, 0xFFFFFFFF) ^ 0xFFFFFFFF;
+      buf.writeUInt32LE(crc, o); o+=4;
+      buf.writeUInt32LE(skill.length, o); o+=4; // compressed
+      buf.writeUInt32LE(skill.length, o); o+=4; // uncompressed
+      buf.writeUInt16LE(name.length, o); o+=2;
+      buf.writeUInt16LE(0, o); o+=2;
+      Buffer.from(name).copy(buf, o); o+=name.length;
+      skill.copy(buf, o); o+=skill.length;
+      // Central directory
+      const cdrOffset = o;
+      buf.writeUInt32LE(0x02014b50, o); o+=4;
+      buf.writeUInt16LE(20, o); o+=2; buf.writeUInt16LE(20, o); o+=2;
+      buf.writeUInt16LE(0, o); o+=2; buf.writeUInt16LE(0, o); o+=2;
+      buf.writeUInt32LE(0, o); o+=4;
+      buf.writeUInt32LE(crc, o); o+=4;
+      buf.writeUInt32LE(skill.length, o); o+=4;
+      buf.writeUInt32LE(skill.length, o); o+=4;
+      buf.writeUInt16LE(name.length, o); o+=2;
+      buf.writeUInt16LE(0, o); o+=2; buf.writeUInt16LE(0, o); o+=2;
+      buf.writeUInt16LE(0, o); o+=2; buf.writeUInt16LE(0, o); o+=2;
+      buf.writeUInt32LE(0, o); o+=4; buf.writeUInt32LE(0, o); o+=4;
+      Buffer.from(name).copy(buf, o); o+=name.length;
+      // End of central directory
+      buf.writeUInt32LE(0x06054b50, o); o+=4;
+      buf.writeUInt16LE(0, o); o+=2; buf.writeUInt16LE(0, o); o+=2;
+      buf.writeUInt16LE(1, o); o+=2; buf.writeUInt16LE(1, o); o+=2;
+      buf.writeUInt32LE(46 + name.length, o); o+=4;
+      buf.writeUInt32LE(cdrOffset, o); o+=4;
+      buf.writeUInt16LE(0, o); o+=2;
+      fs.writeFileSync('$PLUGIN_CACHE/ssh-ops.skill', buf.slice(0, o));
+    " 2>/dev/null
+  fi
 
   # Register in installed_plugins.json
   if [ -f "$INSTALLED_JSON" ]; then
@@ -230,6 +269,53 @@ GEMINIMD
   fi
 else
   skip "~/.claude not found — skipping skill plugin"
+fi
+
+# ── Gemini CLI skill extension ─────────────────────────────────────────────────
+
+step "Gemini CLI skill extension"
+GEMINI_EXTENSIONS="${GEMINI_EXTENSIONS_DIR:-$HOME/.gemini/extensions}"
+GEMINI_EXT="$GEMINI_EXTENSIONS/ssh-ops"
+GEMINI_ENABLE="$GEMINI_EXTENSIONS/extension-enablement.json"
+
+if [ -d "$GEMINI_EXTENSIONS" ]; then
+  mkdir -p "$GEMINI_EXT/skills/ssh-ops"
+
+  VERSION_TAG=$(cat "$DIR/VERSION" 2>/dev/null || echo "latest")
+
+  # gemini-extension.json — proper Gemini CLI format
+  cat > "$GEMINI_EXT/gemini-extension.json" << GEMEXT
+{
+  "name": "ssh-ops",
+  "version": "$VERSION_TAG",
+  "description": "SSH Ops: 27 tools for remote Linux server ops — run commands, manage users/permissions/sudo, assign IPs, health/disk/logs, service control, package management, cron, jump chains, and dynamic profile management.",
+  "publisher": "rushikeshsakharleofficial",
+  "engines": { "gemini": ">=1.0.0" }
+}
+GEMEXT
+
+  # GEMINI.md — context loaded into every Gemini session
+  cat > "$GEMINI_EXT/GEMINI.md" << 'GEMINIMD'
+@./skills/ssh-ops/SKILL.md
+GEMINIMD
+
+  # Copy SKILL.md
+  cp "$DIR/skills/ssh-ops/SKILL.md" "$GEMINI_EXT/skills/ssh-ops/SKILL.md"
+
+  # Enable extension in extension-enablement.json
+  node -e "
+    const fs = require('fs');
+    const f = '$GEMINI_ENABLE';
+    let d = {};
+    try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch(e) {}
+    if (!d['ssh-ops']) {
+      d['ssh-ops'] = { overrides: [process.env.HOME + '/*'] };
+      fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+    }
+  " 2>/dev/null && ok "Gemini extension installed and enabled" \
+    || warn "Extension files installed but could not update enablement — add ssh-ops to $GEMINI_ENABLE manually"
+else
+  skip "~/.gemini/extensions not found — skipping Gemini extension"
 fi
 
 # ── Helper: merge MCP server into a JSON config file ──────────────────────────
