@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   diskReportScript,
+  filePatchScript,
   fileReadScript,
   fileWriteScript,
   formatRunResult,
@@ -227,7 +228,8 @@ const tools = [
       properties: {
         target: { type: "string", description: "Profile or user@host." },
         path: { type: "string", description: "Absolute remote path." },
-        maxBytes: { type: "number", description: "Byte cap. Default 51200." }
+        maxBytes: { type: "number", description: "Byte cap. Default 51200." },
+        encoding: { type: "string", enum: ["text", "base64"], description: "text or base64. Default text." }
       },
       required: ["path"]
     }
@@ -243,7 +245,8 @@ const tools = [
         path: { type: "string", description: "Absolute remote path." },
         content: { type: "string", description: "New file content." },
         backup: { type: "boolean", description: "Backup before overwrite. Default true." },
-        sudo: { type: "boolean", description: "Write via sudo tee." }
+        sudo: { type: "boolean", description: "Write via sudo tee." },
+        encoding: { type: "string", enum: ["text", "base64"], description: "text or base64. Default text." }
       },
       required: ["path", "content"]
     }
@@ -282,6 +285,27 @@ const tools = [
         path: { type: "string", description: "Grep a file instead of journal." },
         timeoutMs: { type: "number", description: "Timeout ms. Default 60000." }
       }
+    }
+  },
+  {
+    name: "ssh_file_patch",
+    title: "Patch Remote File",
+    description: "Edit a remote file: replace a line range or apply a regex substitution. CONFIRM with user before calling unless told to proceed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        path: { type: "string", description: "Absolute remote path." },
+        startLine: { type: "number", description: "First line to replace (1-indexed)." },
+        endLine: { type: "number", description: "Last line to replace. Defaults to startLine." },
+        content: { type: "string", description: "Replacement content for line range." },
+        pattern: { type: "string", description: "ERE regex. Use | as sed delimiter." },
+        replacement: { type: "string", description: "Sed replacement string." },
+        flags: { type: "string", description: "Sed flags. Default g." },
+        backup: { type: "boolean", description: "Backup before patch. Default true." },
+        sudo: { type: "boolean", description: "Run mv via sudo." }
+      },
+      required: ["path"]
     }
   }
 ];
@@ -347,7 +371,7 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_file_read") {
-    const command = fileReadScript(args.path, args.maxBytes);
+    const command = fileReadScript(args.path, args.maxBytes, args.encoding);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -355,7 +379,8 @@ async function callTool(name, args) {
   if (name === "ssh_file_write") {
     const command = fileWriteScript(args.path, args.content, {
       backup: args.backup !== false,
-      sudo: Boolean(args.sudo)
+      sudo: Boolean(args.sudo),
+      encoding: args.encoding
     });
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
@@ -372,6 +397,21 @@ async function callTool(name, args) {
   if (name === "ssh_log_search") {
     const command = logSearchScript(args);
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_file_patch") {
+    const command = filePatchScript(args.path, {
+      startLine: args.startLine,
+      endLine: args.endLine,
+      content: args.content,
+      pattern: args.pattern,
+      replacement: args.replacement,
+      flags: args.flags,
+      backup: args.backup !== false,
+      sudo: Boolean(args.sudo)
+    });
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
