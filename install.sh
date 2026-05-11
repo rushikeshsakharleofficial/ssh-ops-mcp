@@ -48,6 +48,7 @@ step "Installing SSH Ops to $DIR"
 mkdir -p "$DIR/scripts" "$DIR/.codex-plugin" "$DIR/skills/ssh-ops"
 
 fetch() { curl -fsSL "$BASE/$1" -o "$DIR/$1"; }
+fetch VERSION
 fetch scripts/ssh-mcp-server.mjs
 fetch scripts/ssh-core.mjs
 fetch scripts/ssh-ops.mjs
@@ -133,9 +134,10 @@ fi
 # ── Gemini CLI ─────────────────────────────────────────────────────────────────
 
 step "Gemini CLI"
-if has gemini || [ -f "$HOME/.gemini/settings.json" ]; then
-  add_mcp "$HOME/.gemini/settings.json"
-  ok "Registered in ~/.gemini/settings.json"
+if has gemini; then
+  gemini mcp remove ssh-ops --scope user 2>/dev/null || true
+  gemini mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" --scope user 2>/dev/null && \
+    ok "Registered (user scope)" || warn "gemini mcp add failed"
 else
   warn "Not detected — skipping"
 fi
@@ -158,18 +160,6 @@ if [ ! -f "$DIR/ssh-ops.config.yaml" ]; then
   ok "Created $DIR/ssh-ops.config.yaml — edit it to add your server profiles"
 else
   ok "Preserved existing $DIR/ssh-ops.config.yaml"
-fi
-
-# ── Auto-update (weekly cron) ──────────────────────────────────────────────────
-
-step "Auto-update"
-CRON_CMD="curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh | bash >> \"$DIR/update.log\" 2>&1"
-CRON_JOB="0 9 * * 1 $CRON_CMD"
-if (crontab -l 2>/dev/null | grep -q "ssh-ops-mcp/main/install.sh"); then
-  ok "Weekly auto-update already scheduled"
-else
-  (crontab -l 2>/dev/null; echo "# ssh-ops weekly update"; echo "$CRON_JOB") | crontab -
-  ok "Weekly auto-update scheduled (Mondays 9am)"
 fi
 
 echo ""

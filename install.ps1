@@ -36,6 +36,7 @@ if (-not (Has "claude")) {
 Step "Installing SSH Ops to $Dir"
 
 $files = @(
+    "VERSION",
     "scripts/ssh-mcp-server.mjs", "scripts/ssh-core.mjs",
     "scripts/ssh-ops.mjs", "scripts/ssh-cli-options.mjs",
     "ssh-ops.config.example.yaml",
@@ -120,10 +121,11 @@ if ((Has "code") -or (Test-Path "$env:APPDATA\Code")) {
 # ── Gemini CLI ─────────────────────────────────────────────────────────────────
 
 Step "Gemini CLI"
-$geminiCfg = "$env:USERPROFILE\.gemini\settings.json"
-if ((Has "gemini") -or (Test-Path "$env:USERPROFILE\.gemini")) {
-    AddMcp $geminiCfg
-    Ok "Registered in $geminiCfg"
+if (Has "gemini") {
+    & gemini mcp remove ssh-ops --scope user 2>&1 | Out-Null
+    $r = & gemini mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" --scope user 2>&1
+    if ($LASTEXITCODE -eq 0) { Ok "Registered (user scope)" }
+    else { Warn "gemini mcp add failed: $r" }
 } else { Warn "Not detected — skipping" }
 
 # ── Antigravity IDE ────────────────────────────────────────────────────────────
@@ -143,22 +145,6 @@ if (-not (Test-Path $cfg)) {
     Copy-Item (Join-Path $Dir "ssh-ops.config.example.yaml") $cfg
     Ok "Created $cfg — edit it to add your server profiles"
 } else { Ok "Preserved existing $cfg" }
-
-# ── Auto-update (weekly scheduled task) ───────────────────────────────────────
-
-Step "Auto-update"
-$taskName = "ssh-ops-weekly-update"
-$installUrl = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.ps1"
-$action  = New-ScheduledTaskAction -Execute "powershell.exe" `
-           -Argument "-NoProfile -NonInteractive -Command `"irm '$installUrl' | iex`" >> '$Dir\update.log' 2>&1"
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "09:00AM"
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable
-
-if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-}
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
-Ok "Weekly auto-update scheduled (Mondays 9am)"
 
 Write-Host ""
 Write-Host "Done. Restart Claude Code, Codex, Cursor, or VS Code to activate ssh-ops." -ForegroundColor Cyan

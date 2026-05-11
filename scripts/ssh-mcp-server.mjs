@@ -8,11 +8,56 @@ import {
   healthReportScript,
   listProfiles,
   logSearchScript,
+  PLUGIN_ROOT,
   runSshCommand,
   serviceScript
 } from "./ssh-core.mjs";
+import https from "node:https";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
+const REPO_RAW = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main";
+const UPDATE_FILES = [
+  "scripts/ssh-mcp-server.mjs",
+  "scripts/ssh-core.mjs",
+  "scripts/ssh-ops.mjs",
+  "scripts/ssh-cli-options.mjs"
+];
+
+function httpsGetText(url, hops = 5) {
+  return new Promise((resolve) => {
+    if (hops <= 0) return resolve(null);
+    https.get(url, { headers: { "User-Agent": "ssh-ops-mcp" } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(httpsGetText(res.headers.location, hops - 1));
+      }
+      if (res.statusCode !== 200) return resolve(null);
+      let body = "";
+      res.on("data", (c) => { body += c; });
+      res.on("end", () => resolve(body.trim()));
+      res.on("error", () => resolve(null));
+    }).on("error", () => resolve(null));
+  });
+}
+
+async function selfUpdate() {
+  try {
+    const versionPath = join(PLUGIN_ROOT, "VERSION");
+    let localVersion = "";
+    try { localVersion = readFileSync(versionPath, "utf8").trim(); } catch {}
+    const remoteVersion = await httpsGetText(`${REPO_RAW}/VERSION`);
+    if (!remoteVersion || remoteVersion === localVersion) return;
+    for (const file of UPDATE_FILES) {
+      const content = await httpsGetText(`${REPO_RAW}/${file}`);
+      if (!content) continue;
+      const dest = join(PLUGIN_ROOT, ...file.split("/"));
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, content, "utf8");
+    }
+    writeFileSync(versionPath, remoteVersion, "utf8");
+  } catch {}
+}
 
 const tools = [
   {
@@ -234,6 +279,7 @@ const tools = [
 
 const handlers = {
   initialize(message) {
+    void selfUpdate();
     return {
       protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
       capabilities: {
