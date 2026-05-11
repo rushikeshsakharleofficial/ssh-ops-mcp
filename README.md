@@ -1,10 +1,10 @@
 # SSH Ops
 
-SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Does not store passwords or private keys.
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords stored encrypted (AES-256-GCM, device-specific key).
 
 ## Install
 
-**Prerequisites:** `git` and `node` on your PATH.
+**Prerequisites:** `node` on your PATH (auto-installed if missing).
 
 ### macOS / Linux
 
@@ -39,7 +39,8 @@ Also:
 - Auto-installs Node.js if missing (nvm on macOS/Linux; winget/choco/scoop on Windows)
 - Auto-installs `claude` CLI if missing
 - Downloads only needed files to `~/.ssh-ops/` — no git clone, no repo leftovers
-- Re-running updates all files; your `ssh-ops.config.yaml` is preserved
+- Generates a device-specific AES-256-GCM encryption key at `~/.ssh-ops/.encryption-key` (0600)
+- Re-running updates all files; your `ssh-ops.config.yaml` and encryption key are preserved
 - **Auto-updates on session start** — MCP server checks GitHub Releases on every `initialize` and silently pulls updates when a new version is available
 
 Restart your IDE or CLI session after running.
@@ -77,9 +78,25 @@ profiles:
     host: server.example.com
     user: deploy
     port: 22
+  bastion:
+    host: bastion.example.com
+    user: operator
+    access: sudo          # prepend sudo to all commands for this profile
 ```
 
 `ssh-ops.config.yaml` is gitignored — per-machine targets and key paths stay local. JSON config files also work.
+
+### Dynamic profiles (via MCP)
+
+Add servers at runtime without editing any file:
+
+```
+ssh_add_profile(name="staging", host="10.0.0.5", user="admin", password="s3cr3t")
+ssh_add_profile(name="prod-key", host="prod.example.com", user="deploy", identityFile="~/.ssh/prod_rsa")
+ssh_remove_profile(name="staging")
+```
+
+Passwords are encrypted with AES-256-GCM using the device key at `~/.ssh-ops/.encryption-key`. Requires `sshpass` on the local machine for password-based auth. Dynamic profiles are stored in `ssh-ops.dynamic.json` (gitignored).
 
 ### Jump Server Routing
 
@@ -136,6 +153,13 @@ Non-jump targets connect to `bastion` as `operator`, then SSH as `relay` to `roo
 | `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
 | `ssh_cron` | Crontab CRUD for any user — list, add, remove |
 
+### Profile Management
+
+| Tool | Description |
+|------|-------------|
+| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords stored AES-256-GCM encrypted |
+| `ssh_remove_profile` | Remove a dynamically-added profile |
+
 The MCP server communicates over newline-delimited JSON-RPC on stdio.
 
 ---
@@ -172,7 +196,10 @@ CLI options:
 
 ## How It Works
 
-- **Config loading** — merges `ssh-ops.config.yaml` in the project root with `~/.ssh/ssh-ops.yaml`. Override with `SSH_OPS_CONFIG` env var.
-- **Script builders** — each tool generates a bash script piped to `bash -s` on the remote (no interactive shell needed).
-- **Two-hop routing** — when `jumpProfile` is set, the SSH command is wrapped in a nested `ssh` call executed on the jump server.
-- **Safety** — all sudo uses `sudo -n` (fails instead of prompting). `ssh_file_write` creates a timestamped `.bak` before overwriting.
+- **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
+- **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
+- **Two-hop routing** — when `jumpProfile` is set in defaults, SSH Ops connects to the jump host first, then runs a nested `ssh` from there to the final destination using a heredoc. Transparent to the caller.
+- **Password auth** — profiles with a password use `sshpass -e` with the decrypted password injected via the `SSHPASS` env var. Password never appears in process args. Requires `sshpass` installed locally.
+- **Encryption** — passwords stored as `iv:ciphertext:authtag` (AES-256-GCM). Device key generated at install time (`~/.ssh-ops/.encryption-key`, 0600). Passwords from one machine cannot be decrypted on another.
+- **Safety** — all sudo uses `sudo -n` (fails instead of prompting if a password would be required). `ssh_file_write` and `ssh_file_patch` create a timestamped `.bak` before modifying.
+- **Auto-update** — on every MCP `initialize`, the server checks GitHub Releases in the background. If a newer version exists, updated script files are downloaded silently and `VERSION` is bumped. No restart needed for the next session.
