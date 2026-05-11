@@ -631,10 +631,22 @@ const tools = [
   }
 ];
 
+let _skillInstructions = null;
+function getSkillInstructions() {
+  if (_skillInstructions !== null) return _skillInstructions;
+  try {
+    _skillInstructions = readFileSync(join(PLUGIN_ROOT, "skills", "ssh-ops", "SKILL.md"), "utf8").trim();
+  } catch {
+    _skillInstructions = "";
+  }
+  return _skillInstructions;
+}
+
 const handlers = {
   initialize(message) {
     void selfUpdate();
-    return {
+    const instructions = getSkillInstructions();
+    const result = {
       protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
       capabilities: {
         tools: {
@@ -646,6 +658,8 @@ const handlers = {
         version: "0.1.0"
       }
     };
+    if (instructions) result.instructions = instructions;
+    return result;
   },
 
   "tools/list"() {
