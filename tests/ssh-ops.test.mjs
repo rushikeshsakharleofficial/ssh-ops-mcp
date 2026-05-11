@@ -390,3 +390,30 @@ test("filePatchScript throws when endLine provided without startLine", async () 
     /endLine requires startLine\./
   );
 });
+
+test("filePatchScript line-range produces head/tail/heredoc script", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=patch-range-${Date.now()}`;
+  const { filePatchScript } = await import(moduleUrl);
+  const script = filePatchScript("/etc/hosts", { startLine: 3, endLine: 5, content: "new line\n" });
+  assert.ok(script.includes("head -n"), "should use head");
+  assert.ok(script.includes("tail -n +"), "should use tail");
+  assert.ok(script.includes("SSH_OPS_PATCH"), "should use SSH_OPS_PATCH heredoc delimiter");
+  assert.ok(script.includes("new line"), "should embed content");
+  assert.ok(script.includes(".bak."), "should backup");
+  assert.ok(script.includes("$_f.tmp"), "should write to temp file");
+});
+
+test("filePatchScript regex produces sed -E script with exported pattern vars", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=patch-regex-${Date.now()}`;
+  const { filePatchScript } = await import(moduleUrl);
+  const script = filePatchScript("/etc/nginx/nginx.conf", {
+    pattern: "worker_processes [0-9]+",
+    replacement: "worker_processes 4",
+    flags: "g"
+  });
+  assert.ok(script.includes("sed -E"), "should use sed -E");
+  assert.ok(script.includes("SSH_OPS_PATTERN"), "should export SSH_OPS_PATTERN");
+  assert.ok(script.includes("SSH_OPS_REPLACEMENT"), "should export SSH_OPS_REPLACEMENT");
+  assert.ok(script.includes("$_f.tmp"), "should use temp file");
+  assert.ok(script.includes(".bak."), "should backup");
+});
