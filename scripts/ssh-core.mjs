@@ -560,6 +560,24 @@ export function serviceScript(service, action, { sudo = true } = {}) {
   return `set +e\n${prefix}systemctl ${shellQuote(action)} ${shellQuote(String(service))}\n`;
 }
 
+export function logSearchScript({ unit, pattern, lines = 100, since, path: logPath } = {}) {
+  const safeLines = Math.max(1, Number(lines) || 100);
+  const parts = ["set +e", "export LC_ALL=C"];
+
+  if (logPath) {
+    const tailCmd = `tail -n ${safeLines} ${shellQuote(String(logPath))}`;
+    parts.push(pattern ? `${tailCmd} | grep -E ${shellQuote(String(pattern))}` : tailCmd);
+  } else {
+    const jParts = ["journalctl", "--no-pager"];
+    if (unit) jParts.push("-u", shellQuote(String(unit)));
+    if (since) jParts.push("--since", shellQuote(String(since)));
+    jParts.push("-n", String(safeLines));
+    const journalCmd = jParts.join(" ");
+    parts.push(pattern ? `${journalCmd} | grep -E ${shellQuote(String(pattern))}` : journalCmd);
+  }
+  return parts.join("\n") + "\n";
+}
+
 export function formatRunResult(result) {
   const lines = [];
   lines.push(`target: ${result.targetLabel || result.target}`);

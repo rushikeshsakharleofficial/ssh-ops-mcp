@@ -290,3 +290,31 @@ test("serviceScript throws on invalid action", async () => {
     /Invalid action: delete/
   );
 });
+
+test("logSearchScript produces journalctl command with unit and pattern", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=log-journal-${Date.now()}`;
+  const { logSearchScript } = await import(moduleUrl);
+  const script = logSearchScript({ unit: "nginx", pattern: "error", lines: 50 });
+  assert.ok(script.includes("journalctl"), "should use journalctl");
+  assert.ok(script.includes("-u"), "should filter by unit");
+  assert.ok(script.includes("nginx"), "should contain unit name");
+  assert.ok(script.includes("grep -E"), "should pipe to grep");
+  assert.ok(script.includes("-n 50"), "should set line count");
+});
+
+test("logSearchScript greps file when path provided", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=log-file-${Date.now()}`;
+  const { logSearchScript } = await import(moduleUrl);
+  const script = logSearchScript({ path: "/var/log/nginx/error.log", pattern: "502" });
+  assert.ok(script.includes("tail -n"), "should use tail");
+  assert.ok(!script.includes("journalctl"), "should not use journalctl");
+  assert.ok(script.includes("grep -E"), "should pipe to grep");
+  assert.ok(script.includes("502"), "should contain pattern");
+});
+
+test("logSearchScript defaults to 100 lines", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=log-default-${Date.now()}`;
+  const { logSearchScript } = await import(moduleUrl);
+  const script = logSearchScript({});
+  assert.ok(script.includes("-n 100"), "should default to 100 lines");
+});
