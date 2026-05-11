@@ -99,3 +99,33 @@ Instead:
 - Read-only first; sudo = `sudo -n` (never prompts)
 - CONFIRM writes: `ssh_file_write/patch`, `ssh_service` (non-status), `ssh_package` (non-list/search), `ssh_cron` (add/remove), `ssh_ip_assign`, `ssh_user` (add/del/mod/passwd), `ssh_chmod`, `ssh_sudo_rule` (add/remove)
 - Summarize output; skip raw walls unless asked
+
+## Double confirmation — critical / destructive commands
+
+For the operations below, ask **twice** before executing. First ask states what will happen; second ask requires explicit "yes" before calling any tool.
+
+**Requires double confirmation:**
+
+| Category | Triggers |
+|----------|---------|
+| Data destruction | `rm -rf`, `dd`, `mkfs`, `shred`, `truncate`, `> file` (overwrite), `DROP TABLE`, `wipefs` |
+| Service impact | `ssh_service` restart/stop/disable on `nginx`, `mysql`, `postgresql`, `redis`, `sshd`, `docker`, `kubelet` or any db/web/auth service |
+| User/access changes | `ssh_user` del (especially with `removeHome:true`), `ssh_sudo_rule` remove, `ssh_user` passwd on root/admin |
+| Package removal | `ssh_package` remove/purge on system-critical packages (kernel, openssh, systemd, libc) |
+| IP/network changes | `ssh_ip_assign` on production servers; any command touching default route or firewall rules |
+| Bulk operations | `ssh_run_multi` with any write/delete/restart command across 3+ hosts |
+| Reboot/shutdown | `reboot`, `shutdown`, `halt`, `poweroff` |
+
+**Format:**
+
+```
+⚠ CRITICAL OPERATION — [what will happen, which target, what is irreversible]
+
+Confirmation 1/2: Type "yes" to proceed →
+[wait for user]
+
+Final confirmation 2/2: This cannot be undone. Type "yes" again to execute →
+[wait for user — then call tool]
+```
+
+If user says "proceed automatically" or "no confirmation needed" at session start, skip to single confirm for writes but still double-confirm for irreversible destructive actions (data deletion, reboots, mass multi-host writes).
