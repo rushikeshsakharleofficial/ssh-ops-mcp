@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
-const REPO_RAW = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main";
+const RELEASES_API = "https://api.github.com/repos/rushikeshsakharleofficial/ssh-ops-mcp/releases/latest";
 const UPDATE_FILES = [
   "scripts/ssh-mcp-server.mjs",
   "scripts/ssh-core.mjs",
@@ -28,7 +28,11 @@ const UPDATE_FILES = [
 function httpsGetText(url, hops = 5) {
   return new Promise((resolve) => {
     if (hops <= 0) return resolve(null);
-    https.get(url, { headers: { "User-Agent": "ssh-ops-mcp" } }, (res) => {
+    const headers = { "User-Agent": "ssh-ops-mcp" };
+    if (url.includes("api.github.com")) {
+      headers["Accept"] = "application/vnd.github+json";
+    }
+    https.get(url, { headers }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return resolve(httpsGetText(res.headers.location, hops - 1));
       }
@@ -46,10 +50,15 @@ async function selfUpdate() {
     const versionPath = join(PLUGIN_ROOT, "VERSION");
     let localVersion = "";
     try { localVersion = readFileSync(versionPath, "utf8").trim(); } catch {}
-    const remoteVersion = await httpsGetText(`${REPO_RAW}/VERSION`);
+
+    const releaseJson = await httpsGetText(RELEASES_API);
+    if (!releaseJson) return;
+    const { tag_name: remoteVersion } = JSON.parse(releaseJson);
     if (!remoteVersion || remoteVersion === localVersion) return;
+
+    const rawBase = `https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/${remoteVersion}`;
     for (const file of UPDATE_FILES) {
-      const content = await httpsGetText(`${REPO_RAW}/${file}`);
+      const content = await httpsGetText(`${rawBase}/${file}`);
       if (!content) continue;
       const dest = join(PLUGIN_ROOT, ...file.split("/"));
       mkdirSync(dirname(dest), { recursive: true });
