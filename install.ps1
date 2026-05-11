@@ -107,10 +107,20 @@ fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
 # ── Claude Code ────────────────────────────────────────────────────────────────
 
 Step "Claude Code"
-& claude mcp remove ssh-ops 2>&1 | Out-Null
-& claude mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) { Ok "Registered" }
-else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
+$McpTarget = "$Dir\scripts\ssh-mcp-server.mjs"
+$mcpInfo = & claude mcp get ssh-ops 2>&1
+if ($mcpInfo -match [regex]::Escape($McpTarget)) {
+    Ok "Already registered (up-to-date)"
+} else {
+    # Remove from all scopes before re-adding to avoid "already exists" errors
+    & claude mcp remove ssh-ops              2>&1 | Out-Null
+    & claude mcp remove ssh-ops -s local    2>&1 | Out-Null
+    & claude mcp remove ssh-ops -s user     2>&1 | Out-Null
+    & claude mcp remove ssh-ops -s project  2>&1 | Out-Null
+    & claude mcp add ssh-ops node $McpTarget 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok "Registered" }
+    else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$McpTarget`"" }
+}
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
 
@@ -118,18 +128,28 @@ Step "Codex"
 if ((Has "codex") -or (Test-Path $CodexPlugins)) {
     New-Item -ItemType Directory -Force -Path $CodexPlugins | Out-Null
     $link = Join-Path $CodexPlugins "ssh-ops"
-    if (Test-Path $link) { Remove-Item $link -Force -Recurse }
-    New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
-    Ok "Linked at $link"
+    $linkTarget = if (Test-Path $link) { (Get-Item $link).Target } else { $null }
+    if ($linkTarget -and ((Resolve-Path $linkTarget -ErrorAction SilentlyContinue).Path -eq (Resolve-Path $Dir).Path)) {
+        Ok "Already linked (up-to-date)"
+    } else {
+        if (Test-Path $link) { Remove-Item $link -Force -Recurse }
+        New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
+        Ok "Linked at $link"
+    }
 } else { Skip "Not detected — skipping" }
 
 # ── Cursor ─────────────────────────────────────────────────────────────────────
 
 Step "Cursor"
 $cursorDir = "$env:USERPROFILE\.cursor"
+$cursorCfg = "$cursorDir\mcp.json"
 if ((Has "cursor") -or (Test-Path $cursorDir)) {
-    AddMcp "$cursorDir\mcp.json"
-    Ok "Registered in $cursorDir\mcp.json"
+    if ((Test-Path $cursorCfg) -and ((Get-Content $cursorCfg -Raw 2>$null) -match [regex]::Escape("$Dir\scripts\ssh-mcp-server.mjs"))) {
+        Ok "Already registered (up-to-date)"
+    } else {
+        AddMcp $cursorCfg
+        Ok "Registered in $cursorCfg"
+    }
 } else { Skip "Not detected — skipping" }
 
 # ── VS Code Copilot ────────────────────────────────────────────────────────────
@@ -137,18 +157,27 @@ if ((Has "cursor") -or (Test-Path $cursorDir)) {
 Step "VS Code Copilot"
 $vscodeCfg = "$env:APPDATA\Code\User\settings.json"
 if ((Has "code") -or (Test-Path "$env:APPDATA\Code")) {
-    AddMcp $vscodeCfg "vscode"
-    Ok "Registered in $vscodeCfg"
+    if ((Test-Path $vscodeCfg) -and ((Get-Content $vscodeCfg -Raw 2>$null) -match [regex]::Escape("$Dir\scripts\ssh-mcp-server.mjs"))) {
+        Ok "Already registered (up-to-date)"
+    } else {
+        AddMcp $vscodeCfg "vscode"
+        Ok "Registered in $vscodeCfg"
+    }
 } else { Skip "Not detected — skipping" }
 
 # ── Gemini CLI ─────────────────────────────────────────────────────────────────
 
 Step "Gemini CLI"
 if (Has "gemini") {
-    & gemini mcp remove ssh-ops --scope user 2>&1 | Out-Null
-    $r = & gemini mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" --scope user 2>&1
-    if ($LASTEXITCODE -eq 0) { Ok "Registered (user scope)" }
-    else { Err "gemini mcp add failed: $r" }
+    $geminiInfo = & gemini mcp list 2>&1
+    if ($geminiInfo -match [regex]::Escape("$Dir\scripts\ssh-mcp-server.mjs")) {
+        Ok "Already registered (up-to-date)"
+    } else {
+        & gemini mcp remove ssh-ops --scope user 2>&1 | Out-Null
+        $r = & gemini mcp add ssh-ops node "$Dir\scripts\ssh-mcp-server.mjs" --scope user 2>&1
+        if ($LASTEXITCODE -eq 0) { Ok "Registered (user scope)" }
+        else { Err "gemini mcp add failed: $r" }
+    }
 } else { Skip "Not detected — skipping" }
 
 # ── Antigravity IDE ────────────────────────────────────────────────────────────
@@ -156,8 +185,12 @@ if (Has "gemini") {
 Step "Antigravity IDE"
 $antigravityCfg = "$env:USERPROFILE\.gemini\antigravity\mcp_config.json"
 if ((Has "antigravity") -or (Test-Path "$env:USERPROFILE\.gemini\antigravity")) {
-    AddMcp $antigravityCfg
-    Ok "Registered in $antigravityCfg"
+    if ((Test-Path $antigravityCfg) -and ((Get-Content $antigravityCfg -Raw 2>$null) -match [regex]::Escape("$Dir\scripts\ssh-mcp-server.mjs"))) {
+        Ok "Already registered (up-to-date)"
+    } else {
+        AddMcp $antigravityCfg
+        Ok "Registered in $antigravityCfg"
+    }
 } else { Skip "Not detected — skipping" }
 
 # ── Config ─────────────────────────────────────────────────────────────────────

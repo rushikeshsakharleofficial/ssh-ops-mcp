@@ -115,11 +115,20 @@ add_mcp() {
 # ── Claude Code ────────────────────────────────────────────────────────────────
 
 step "Claude Code"
-claude mcp remove ssh-ops 2>/dev/null || true
-if claude mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" 2>/dev/null; then
-  ok "Registered"
+_mcp_target="$DIR/scripts/ssh-mcp-server.mjs"
+if claude mcp get ssh-ops 2>/dev/null | grep -qF "$_mcp_target"; then
+  ok "Already registered (up-to-date)"
 else
-  err "Registration failed — run manually: claude mcp add ssh-ops node \"$DIR/scripts/ssh-mcp-server.mjs\""
+  # Remove from all scopes before re-adding to avoid "already exists" errors
+  claude mcp remove ssh-ops              2>/dev/null || true
+  claude mcp remove ssh-ops -s local    2>/dev/null || true
+  claude mcp remove ssh-ops -s user     2>/dev/null || true
+  claude mcp remove ssh-ops -s project  2>/dev/null || true
+  if claude mcp add ssh-ops node "$_mcp_target" 2>/dev/null; then
+    ok "Registered"
+  else
+    err "Registration failed — run manually: claude mcp add ssh-ops node \"$_mcp_target\""
+  fi
 fi
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
@@ -127,8 +136,13 @@ fi
 step "Codex"
 if has codex || [ -d "$CODEX_PLUGINS" ]; then
   mkdir -p "$CODEX_PLUGINS"
-  ln -sfn "$DIR" "$CODEX_PLUGINS/ssh-ops"
-  ok "Linked at $CODEX_PLUGINS/ssh-ops"
+  _codex_link="$CODEX_PLUGINS/ssh-ops"
+  if [ -L "$_codex_link" ] && [ "$(readlink -f "$_codex_link" 2>/dev/null)" = "$(readlink -f "$DIR")" ]; then
+    ok "Already linked (up-to-date)"
+  else
+    ln -sfn "$DIR" "$_codex_link"
+    ok "Linked at $_codex_link"
+  fi
 else
   skip "Not detected — skipping"
 fi
@@ -137,8 +151,13 @@ fi
 
 step "Cursor"
 if has cursor || [ -d "$HOME/.cursor" ]; then
-  add_mcp "$HOME/.cursor/mcp.json"
-  ok "Registered in ~/.cursor/mcp.json"
+  _cursor_cfg="$HOME/.cursor/mcp.json"
+  if [ -f "$_cursor_cfg" ] && grep -qF "$DIR/scripts/ssh-mcp-server.mjs" "$_cursor_cfg" 2>/dev/null; then
+    ok "Already registered (up-to-date)"
+  else
+    add_mcp "$_cursor_cfg"
+    ok "Registered in ~/.cursor/mcp.json"
+  fi
 else
   skip "Not detected — skipping"
 fi
@@ -152,8 +171,12 @@ if has code || [ -d "$HOME/.config/Code" ] || [ -d "$HOME/Library/Application Su
   else
     VSCODE_SETTINGS="$HOME/.config/Code/User/settings.json"
   fi
-  add_mcp "$VSCODE_SETTINGS" "vscode"
-  ok "Registered in $VSCODE_SETTINGS"
+  if [ -f "$VSCODE_SETTINGS" ] && grep -qF "$DIR/scripts/ssh-mcp-server.mjs" "$VSCODE_SETTINGS" 2>/dev/null; then
+    ok "Already registered (up-to-date)"
+  else
+    add_mcp "$VSCODE_SETTINGS" "vscode"
+    ok "Registered in $VSCODE_SETTINGS"
+  fi
 else
   skip "Not detected — skipping"
 fi
@@ -162,11 +185,15 @@ fi
 
 step "Gemini CLI"
 if has gemini; then
-  gemini mcp remove ssh-ops --scope user 2>/dev/null || true
-  if gemini mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" --scope user 2>/dev/null; then
-    ok "Registered (user scope)"
+  if gemini mcp list 2>&1 | grep -qF "$DIR/scripts/ssh-mcp-server.mjs"; then
+    ok "Already registered (up-to-date)"
   else
-    err "gemini mcp add failed"
+    gemini mcp remove ssh-ops --scope user 2>/dev/null || true
+    if gemini mcp add ssh-ops node "$DIR/scripts/ssh-mcp-server.mjs" --scope user 2>/dev/null; then
+      ok "Registered (user scope)"
+    else
+      err "gemini mcp add failed"
+    fi
   fi
 else
   skip "Not detected — skipping"
@@ -176,8 +203,13 @@ fi
 
 step "Antigravity IDE"
 if [ -d "$HOME/.gemini/antigravity" ] || has antigravity; then
-  add_mcp "$HOME/.gemini/antigravity/mcp_config.json"
-  ok "Registered in ~/.gemini/antigravity/mcp_config.json"
+  _anti_cfg="$HOME/.gemini/antigravity/mcp_config.json"
+  if [ -f "$_anti_cfg" ] && grep -qF "$DIR/scripts/ssh-mcp-server.mjs" "$_anti_cfg" 2>/dev/null; then
+    ok "Already registered (up-to-date)"
+  else
+    add_mcp "$_anti_cfg"
+    ok "Registered in ~/.gemini/antigravity/mcp_config.json"
+  fi
 else
   skip "Not detected — skipping"
 fi
