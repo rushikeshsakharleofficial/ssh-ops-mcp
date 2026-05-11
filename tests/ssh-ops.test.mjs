@@ -217,3 +217,11 @@ test("parseOptions rejects missing option values before target resolution", () =
     /Option --timeout-ms requires a value\./
   );
 });
+
+test("fileWriteScript uses SSH_OPS_WRITE delimiter prefix in heredoc", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=write-delim-${Date.now()}`;
+  const { fileWriteScript } = await import(moduleUrl);
+  const script = fileWriteScript("/etc/hosts", "127.0.0.1 localhost\n");
+  assert.ok(script.includes("SSH_OPS_WRITE"), "heredoc delimiter should use SSH_OPS_WRITE prefix");
+  assert.ok(!script.includes("SSH_OPS_REMOTE_SCRIPT"), "should not use remote script prefix");
+});

@@ -356,12 +356,12 @@ function buildNestedSshArgs(destination, options) {
   return args;
 }
 
-function uniqueHeredocDelimiter(source) {
-  let delimiter = "SSH_OPS_REMOTE_SCRIPT";
+function uniqueHeredocDelimiter(source, prefix = "SSH_OPS_REMOTE_SCRIPT") {
+  let delimiter = prefix;
   let counter = 0;
   while (source.includes(delimiter)) {
     counter += 1;
-    delimiter = `SSH_OPS_REMOTE_SCRIPT_${counter}`;
+    delimiter = `${prefix}_${counter}`;
   }
   return delimiter;
 }
