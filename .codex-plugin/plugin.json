@@ -20,8 +20,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SSH Ops",
-    "shortDescription": "Run reusable SSH inventory, health, disk, and command tasks.",
-    "longDescription": "SSH Ops exposes a small MCP server and CLI wrapper for remote Linux server checks. It reuses the local ssh binary, existing SSH config, and optional profile files without storing passwords or private keys.",
+    "shortDescription": "Run SSH inventory, health, disk, file, service, and log tasks.",
+    "longDescription": "SSH Ops exposes an MCP server and CLI for remote Linux server operations. Covers hardware inventory, health checks, disk reports, file read/write, systemd service control, and log search. Reuses the local ssh binary, existing SSH config, and optional profile files without storing passwords or private keys.",
     "developerName": "Rushikesh Sakharle",
     "category": "Productivity",
     "capabilities": [
@@ -31,8 +31,9 @@
     ],
     "defaultPrompt": [
       "Check my server hardware with SSH Ops.",
-      "Run a disk report on my default SSH profile.",
-      "Show failed services on my SSH server."
+      "Read /etc/nginx/nginx.conf on my production server.",
+      "Show failed services on my SSH server.",
+      "Search nginx logs for errors in the last hour."
     ],
     "brandColor": "#10B981"
   }
