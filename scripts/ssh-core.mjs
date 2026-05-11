@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, openSync, readdirSync, readFileSync, readSync, closeSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -54,6 +54,64 @@ export function decryptPassword(encrypted) {
   const decipher = createDecipheriv(ENC_ALGO, key, Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   return decipher.update(Buffer.from(encHex, "hex"), undefined, "utf8") + decipher.final("utf8");
+}
+
+const AUTH_FAILURE_PATTERNS = [
+  /Permission denied/i,
+  /Authentication failed/i,
+  /Could not authenticate/i,
+  /Too many authentication failures/i,
+  /No supported authentication methods/i
+];
+
+function isAuthFailure(stderr) {
+  return AUTH_FAILURE_PATTERNS.some((re) => re.test(stderr || ""));
+}
+
+function markProfileAuthFailed(profileName) {
+  if (!profileName || !existsSync(DYNAMIC_CONFIG)) return;
+  let dynamic = {};
+  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch { return; }
+  if (!dynamic.profiles?.[profileName]) return;
+  dynamic.profiles[profileName]._authFailed = true;
+  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
+  _configCache = null;
+  _configCacheTime = 0;
+}
+
+function clearProfileAuthFailed(dynamic, profileName) {
+  if (dynamic.profiles?.[profileName]) {
+    delete dynamic.profiles[profileName]._authFailed;
+  }
+}
+
+export function listLocalSshKeys() {
+  const sshDir = join(os.homedir(), ".ssh");
+  const homeDir = os.homedir();
+  const keys = [];
+  const skipPatterns = /\.(pub|known_hosts|authorized_keys|config|txt|md|json|yaml|yml)$/i;
+  for (const dir of [sshDir, homeDir]) {
+    let files;
+    try { files = readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (skipPatterns.test(f)) continue;
+      const fullPath = join(dir, f);
+      try {
+        const stat = statSync(fullPath);
+        if (!stat.isFile()) continue;
+        const buf = Buffer.alloc(128);
+        const fd = openSync(fullPath, "r");
+        const bytesRead = readSync(fd, buf, 0, 128, 0);
+        closeSync(fd);
+        const header = buf.slice(0, bytesRead).toString("latin1");
+        if (header.includes("-----BEGIN") && header.includes("PRIVATE KEY") ||
+            header.includes("-----BEGIN OPENSSH PRIVATE KEY")) {
+          keys.push(fullPath);
+        }
+      } catch {}
+    }
+  }
+  return keys;
 }
 
 let _configCache = null;
@@ -228,7 +286,11 @@ export function addProfile(name, profile) {
     }
   } catch {}
   dynamic.profiles = dynamic.profiles || {};
+  const existing = dynamic.profiles[name] || {};
   const entry = {
+    _type: "profile",
+    _addedAt: existing._addedAt || new Date().toISOString(),
+    _updatedAt: new Date().toISOString(),
     host: profile.host,
     ...(profile.user && { user: profile.user }),
     ...(profile.port && { port: Number(profile.port) }),
@@ -241,6 +303,7 @@ export function addProfile(name, profile) {
     entry.batchMode = false;
   }
   dynamic.profiles[name] = entry;
+  clearProfileAuthFailed(dynamic, name);
   writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
   _configCache = null;
   _configCacheTime = 0;
@@ -294,8 +357,12 @@ export function addJumpServer(name, server, { appendToChain = true, commonUser }
   } catch {}
   dynamic.profiles = dynamic.profiles || {};
   dynamic.defaults = dynamic.defaults || {};
+  const existingJs = dynamic.profiles[name] || {};
   const entry = {
+    _type: "jump",
     _isJumpServer: true,
+    _addedAt: existingJs._addedAt || new Date().toISOString(),
+    _updatedAt: new Date().toISOString(),
     host: server.host,
     ...(server.user && { user: server.user }),
     ...(server.port && { port: Number(server.port) }),
@@ -306,6 +373,7 @@ export function addJumpServer(name, server, { appendToChain = true, commonUser }
     entry.batchMode = false;
   }
   dynamic.profiles[name] = entry;
+  clearProfileAuthFailed(dynamic, name);
   if (appendToChain) {
     const chain = Array.isArray(dynamic.defaults.jumpChain) ? dynamic.defaults.jumpChain : [];
     if (!chain.includes(name)) chain.push(name);
@@ -513,6 +581,13 @@ export async function runSshCommand(input = {}) {
     env: processEnv
   });
 
+  // Detect SSH auth failure and mark the profile so the next call surfaces a clear error
+  const authFailed = result.exitCode === 255 && isAuthFailure(result.stderr);
+  if (authFailed) {
+    const profileName = input.profile || input.target;
+    if (profileName) markProfileAuthFailed(profileName);
+  }
+
   return {
     ...result,
     durationMs: Date.now() - startedAt,
@@ -520,7 +595,8 @@ export async function runSshCommand(input = {}) {
     targetLabel: targetInfo.targetLabel,
     remoteJump: targetInfo.remoteJump,
     mode,
-    sudo: Boolean(input.sudo) || targetInfo.options.access === "sudo"
+    sudo: Boolean(input.sudo) || targetInfo.options.access === "sudo",
+    authFailed
   };
 }
 
@@ -857,6 +933,12 @@ export function formatRunResult(result) {
   if (result.timedOut) lines.push("timedOut: true");
   if (result.stdoutTruncated) lines.push("stdoutTruncated: true");
   if (result.stderrTruncated) lines.push("stderrTruncated: true");
+  if (result.authFailed) {
+    lines.push("");
+    lines.push("⚠ AUTH FAILURE — credentials stored for this profile no longer work.");
+    lines.push("  Update via ssh_add_profile / ssh_add_jump with new password or identityFile.");
+    lines.push("  To see available local SSH keys: ssh_list_keys");
+  }
   lines.push("");
   lines.push("----- stdout -----");
   lines.push(result.stdout || "");

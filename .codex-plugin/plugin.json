@@ -1,6 +1,6 @@
 {
   "name": "ssh-ops",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "MCP server and CLI for remote Linux server operations: inventory, health, disk, file ops, service control, log search, network checks, package management, cron CRUD, dynamic profile management, encrypted passwords, and SSH -J jump chain management.",
   "author": {
     "name": "Rushikesh Sakharle",

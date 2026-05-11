@@ -26,6 +26,7 @@ Prefer `ssh-ops` MCP tools when available:
 - `ssh_add_jump`: add a jump/bastion server and append to the SSH -J chain; optional `commonUser` sets default user for all target connections; supports password auth
 - `ssh_remove_jump`: remove a jump server and auto-remove from chain
 - `ssh_list_jumps`: show current jump chain, all jump servers, and commonUser
+- `ssh_list_keys`: list SSH private key files in `~/.ssh/` and home directory; call when auth fails or user needs to pick a key for a new profile
 
 CLI fallback from plugin root when MCP unavailable:
 
@@ -50,6 +51,7 @@ Config defaults with `jumpProfile`, `jumpUser`, `targetUser` route non-jump targ
 
 ## Safety
 
+- When ssh_run / ssh_inventory etc returns `authFailed: true` — call `ssh_list_keys` to show available keys, then ask user for correct key or password, then call `ssh_add_profile` or `ssh_add_jump` to update credentials. Credentials are stored and reused automatically; re-prompt only on failure.
 - Read-only tools first for inventory/health/log checks.
 - `sudo` uses `sudo -n` — fails instead of prompting.
 - **CONFIRM with user before write actions** unless user says to proceed automatically: `ssh_file_write`, `ssh_file_patch`, `ssh_service` (start/stop/restart/enable/disable), `ssh_package` (install/remove/update/upgrade), `ssh_cron` (add/remove).

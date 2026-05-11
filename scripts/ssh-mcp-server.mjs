@@ -3,6 +3,7 @@ import {
   addJumpServer,
   addProfile,
   cronScript,
+  listLocalSshKeys,
   diskReportScript,
   filePatchScript,
   fileReadScript,
@@ -466,6 +467,15 @@ const tools = [
       type: "object",
       properties: {}
     }
+  },
+  {
+    name: "ssh_list_keys",
+    title: "List Local SSH Keys",
+    description: "List SSH private key files found in ~/.ssh/ and home directory. Use to identify which identityFile to specify when adding a profile or jump server, or when the default key stopped working.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
   }
 ];
 
@@ -665,6 +675,14 @@ async function callTool(name, args) {
 
   if (name === "ssh_list_jumps") {
     return textResult(JSON.stringify(listJumpServers(), null, 2));
+  }
+
+  if (name === "ssh_list_keys") {
+    const keys = listLocalSshKeys();
+    const out = keys.length > 0
+      ? `Found ${keys.length} SSH private key(s):\n${keys.map((k) => `  ${k}`).join("\n")}`
+      : "No SSH private keys found in ~/.ssh/ or home directory.";
+    return textResult(out);
   }
 
   return textResult(`Unknown tool: ${name}`, true);
