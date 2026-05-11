@@ -1,0 +1,28 @@
+{
+  "name": "rushikeshsakharleofficial",
+  "owner": {
+    "name": "Rushikesh Sakharle",
+    "url": "https://github.com/rushikeshsakharleofficial"
+  },
+  "metadata": {
+    "description": "SSH Ops MCP — remote server management via SSH.",
+    "version": "1.16.0"
+  },
+  "plugins": [
+    {
+      "name": "ssh-ops",
+      "source": "./",
+      "description": "Run commands, manage files, inventory, health, disk, logs, services, packages, cron, users, IP assignment, jump servers on remote hosts via SSH.",
+      "version": "1.16.0",
+      "author": {
+        "name": "Rushikesh Sakharle",
+        "url": "https://github.com/rushikeshsakharleofficial"
+      },
+      "homepage": "https://github.com/rushikeshsakharleofficial/ssh-ops-mcp",
+      "repository": "https://github.com/rushikeshsakharleofficial/ssh-ops-mcp",
+      "license": "MIT",
+      "category": "DevOps",
+      "tags": ["ssh", "devops", "server", "mcp", "remote"]
+    }
+  ]
+}
