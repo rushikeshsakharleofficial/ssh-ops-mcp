@@ -57,7 +57,7 @@ function httpsGetText(url, hops = 5) {
   return new Promise((resolve) => {
     if (hops <= 0) return resolve(null);
     const headers = { "User-Agent": "ssh-ops-mcp" };
-    if (url.includes("api.github.com")) {
+    if (new URL(url).hostname === "api.github.com") {
       headers["Accept"] = "application/vnd.github+json";
     }
     https.get(url, { headers }, (res) => {
