@@ -2,15 +2,23 @@
   "mcpServers": {
     "ssh-ops": {
       "command": "node",
-      "args": ["./scripts/ssh-mcp-server.mjs"]
+      "args": [
+        "./scripts/ssh-mcp-server.mjs"
+      ]
     },
     "code-outline": {
       "command": "code-outline-graph",
-      "args": ["serve", "."]
+      "args": [
+        "serve",
+        "--no-watch",
+        "/home/rushikesh.sakharle/Projects/ssh-ops-mcp"
+      ]
     },
     "sonarqube": {
       "command": "node",
-      "args": ["./scripts/sonar-mcp-server.mjs"],
+      "args": [
+        "./scripts/sonar-mcp-server.mjs"
+      ],
       "env": {
         "SONAR_TOKEN": "${SONAR_TOKEN}",
         "SONAR_HOST_URL": "${SONAR_HOST_URL}"
