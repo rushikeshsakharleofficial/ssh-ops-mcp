@@ -1,6 +1,6 @@
 ---
 name: ssh-ops
-description: SSH Ops MCP — run commands, inventory, health, disk, logs, files, services, packages, cron, users, IP assignment, jump servers on remote hosts via SSH.
+description: SSH Ops MCP — 35 tools for remote SSH ops: commands, inventory, health, disk, logs, files, services, packages, cron, users, docker, metrics, IP assignment, jump servers, file transfer, process management, env vars.
 ---
 
 # SSH Ops
@@ -13,13 +13,16 @@ Use `ssh-ops` MCP tools. Target = profile name or `user@host`.
 - `ssh_profiles` — list profiles (no connect)
 - `ssh_inventory` — OS/CPU/RAM/disk/network
 - `ssh_disk_report` — disk/inode/container storage
-- `ssh_health_report` — load/services/processes/docker
+- `ssh_health_report` — load/services/processes/docker; fires alertWebhook if thresholds breached
 - `ssh_log_search` — journal or file grep; params: unit/pattern/lines/since/path
 - `ssh_network_check` — ping/port/TLS from remote server
+- `ssh_ping` — TCP reachability without auth; params: target/host/port/timeoutMs/count; returns reachable/avgLatencyMs
+- `ssh_metrics` — /proc metrics (no agent); returns cpuPercent/memPercent/memUsedMB/loadAvg/uptimeSeconds/diskIO/netIO
+- `ssh_diff` — compare remote file vs local or remote-vs-remote; params: target/remotePath/localPath/target2/remotePath2/context
 
 **Exec**
 - `ssh_run` — single host; params: command/target/sudo/mode/cwd/jumpHost/sshOptions
-- `ssh_run_multi` — parallel multi-host; `format:"json"` for structured output
+- `ssh_run_multi` — parallel multi-host; `format:"json"` for structured output; `group:"prod"` targets all profiles with matching group field
 
 **Files** *(CONFIRM before write)*
 - `ssh_file_read` — `encoding:"base64"` for binary
@@ -33,16 +36,21 @@ Use `ssh-ops` MCP tools. Target = profile name or `user@host`.
 - `ssh_ip_assign` — permanent IP; `ips`/`group`/`fromFile`; auto-detects netplan/NM/network-scripts/networkd/rc.local; always sudo
 - `ssh_user` — add/del/mod/list/info/passwd/lock/unlock; groups/shell/home/system
 - `ssh_chmod` — chmod+chown+chgrp; mode/owner/group/recursive
-- `ssh_sudo_rule` — /etc/sudoers.d/; visudo -c validation; commands/nopasswd; list/add/remove
+- `ssh_sudo_rule` — /etc/sudoers.d/; visudo -c validation; `commands` required (no default ALL); nopasswd defaults false; list/add/remove
+- `ssh_docker` — list/logs/restart/stop/start/inspect/stats; params: action/container/lines/since/sudo
+- `ssh_env` — /etc/environment list/get/set/unset; params: action/key/value
+- `ssh_process` — list processes or kill; params: action/pid/processName/signal/filter
+- `ssh_script` — upload+run local script on remote via bash; params: localScript/args/sudo/cwd; must be within plugin dir
+- `ssh_transfer` — scp local↔remote or remote↔remote; params: src/dst/recursive; use `profile:path` notation
 
 **IP groups**
 - `ssh_save_ip_group` / `ssh_remove_ip_group` / `ssh_list_ip_groups`
 
-**Profile mgmt**
-- `ssh_add_profile(name,host,user,port,password,identityFile,access,jumpProfile,jumpUser,targetUser,localSwitchUser)`
+**Profile mgmt** *(CONFIRM for add/remove)*
+- `ssh_add_profile(name,host,user,port,password,identityFile,access,jumpProfile,jumpUser,targetUser,localSwitchUser,group,allowedCommands,extends,hidden)`
 - `ssh_remove_profile` / `ssh_list_keys`
 
-**Jump servers**
+**Jump servers** *(CONFIRM for add/remove)*
 - `ssh_add_jump(name,host,user,commonUser)` — appends to -J chain
 - `ssh_remove_jump` / `ssh_list_jumps`
 
@@ -63,6 +71,32 @@ Unknown IP/host → do NOT ask for credentials first:
 
 `localSwitchUser` per-profile: `ssh_add_profile(name="web1", host="10.0.1.10", localSwitchUser="relay")`
 Or globally in `defaults.localSwitchUser`.
+
+## Profile features
+
+- **`allowedCommands`** — per-profile command allowlist; `ssh_run` rejects commands not starting with a listed prefix
+  ```
+  ssh_add_profile(name="prod", host="x.x.x.x", allowedCommands=["systemctl status","df -h","journalctl -n"])
+  ```
+- **`group`** — tag profiles for `ssh_run_multi` group targeting: `group:"prod"` runs on all prod-tagged profiles
+- **`extends`** — inherit another profile's fields (child wins on conflict, single-level only):
+  ```yaml
+  base: { user: ubuntu, port: 22 }
+  web-1: { extends: base, host: 10.0.1.1, group: prod }
+  ```
+- **`hidden:true`** — profile excluded from `ssh_profiles` listing but still usable when targeted directly
+- **`exposeProfiles:false`** config — hides `ssh_profiles` tool from tools/list entirely
+
+## dryRun + reason
+
+All mutating tools accept:
+- `dryRun:true` → returns the bash script that would run, without executing
+- `reason:"why"` → logged to `ssh-ops-audit.log` and shown in confirm message
+
+## Audit + rate limiting
+
+- All tool calls logged to `ssh-ops-audit.log` (passwords redacted)
+- `rateLimitPerMin` config (default 60) — per target per minute
 
 ## Large output — export to local file
 
@@ -97,7 +131,7 @@ Instead:
 
 - `authFailed:true` → `ssh_list_keys` → update via `ssh_add_profile`/`ssh_add_jump`; creds reused silently until failure
 - Read-only first; sudo = `sudo -n` (never prompts)
-- CONFIRM writes: `ssh_file_write/patch`, `ssh_service` (non-status), `ssh_package` (non-list/search), `ssh_cron` (add/remove), `ssh_ip_assign`, `ssh_user` (add/del/mod/passwd), `ssh_chmod`, `ssh_sudo_rule` (add/remove)
+- CONFIRM writes: `ssh_file_write/patch`, `ssh_service` (non-status), `ssh_package` (non-list/search), `ssh_cron` (add/remove), `ssh_ip_assign`, `ssh_user` (add/del/mod/passwd), `ssh_chmod`, `ssh_sudo_rule` (add/remove), `ssh_add_profile`, `ssh_remove_profile`, `ssh_add_jump`, `ssh_remove_jump`, `ssh_run`+`ssh_run_multi` (sudo:true), `ssh_docker` (restart/stop/start), `ssh_env` (set/unset), `ssh_process` (kill), `ssh_script`, `ssh_transfer`
 - Summarize output; skip raw walls unless asked
 
 ## Mutating tools — confirm param required
@@ -105,7 +139,11 @@ Instead:
 All write/mutating tools require `confirm:true` parameter, or server returns error.
 Mutating: ssh_file_write, ssh_file_patch, ssh_service (start/stop/restart/enable/disable),
 ssh_package (install/remove/update/upgrade), ssh_cron (add/remove), ssh_ip_assign,
-ssh_user (add/del/mod/passwd/lock/unlock), ssh_chmod, ssh_sudo_rule (add/remove).
+ssh_user (add/del/mod/passwd/lock/unlock), ssh_chmod, ssh_sudo_rule (add/remove),
+ssh_add_profile, ssh_remove_profile, ssh_add_jump, ssh_remove_jump,
+ssh_run (sudo:true), ssh_run_multi (sudo:true),
+ssh_docker (restart/stop/start), ssh_env (set/unset), ssh_process (kill),
+ssh_script, ssh_transfer.
 
 ## Double confirmation — critical / destructive commands
 
