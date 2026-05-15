@@ -23,6 +23,7 @@ import {
   healthReportScript,
   listJumpServers,
   listProfiles,
+  resolveGroup,
   getConfig,
   logSearchScript,
   networkCheckScript,
@@ -35,7 +36,8 @@ import {
   serviceScript
 } from "./ssh-core.mjs";
 import https from "node:https";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as pathResolve, sep as pathSep } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -100,6 +102,35 @@ async function selfUpdate() {
     }
     writeFileSync(versionPath, remoteVersion, "utf8");
   } catch {}
+}
+
+async function sendAlert(webhook, payload) {
+  try {
+    const { hostname, pathname, port, protocol } = new URL(webhook);
+    if (protocol !== "https:") return;
+    const body = JSON.stringify(payload);
+    await new Promise((resolve) => {
+      const req = https.request(
+        { hostname, path: pathname, port: port || 443, method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+        (res) => { res.resume(); res.on("end", resolve); }
+      );
+      req.on("error", resolve);
+      req.write(body);
+      req.end();
+    });
+  } catch {}
+}
+
+function parseHealthMetrics(output) {
+  const metrics = {};
+  const cpuMatch = output.match(/cpu[^:]*:\s*([\d.]+)%/i);
+  if (cpuMatch) metrics.cpuPercent = parseFloat(cpuMatch[1]);
+  const memMatch = output.match(/mem[^:]*:\s*([\d.]+)%/i) || output.match(/([\d.]+)%\s*used/i);
+  if (memMatch) metrics.memPercent = parseFloat(memMatch[1]);
+  const diskMatch = output.match(/disk[^:]*:\s*([\d.]+)%/i) || output.match(/([\d.]+)%\s*full/i);
+  if (diskMatch) metrics.diskPercent = parseFloat(diskMatch[1]);
+  return metrics;
 }
 
 const profilesTool = {
@@ -293,7 +324,8 @@ const allTools = [
         backup: { type: "boolean", description: "Backup before overwrite. Default true." },
         sudo: { type: "boolean", description: "Write via sudo tee." },
         encoding: { type: "string", enum: ["text", "base64"], description: "text or base64. Default text." },
-        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["path", "content"]
     }
@@ -313,7 +345,8 @@ const allTools = [
           description: "Systemd action."
         },
         sudo: { type: "boolean", description: "Run via sudo -n. Default true." },
-        confirm: { type: "boolean", description: "Required true for start/stop/restart/enable/disable." }
+        confirm: { type: "boolean", description: "Required true for start/stop/restart/enable/disable." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["service", "action"]
     }
@@ -352,7 +385,8 @@ const allTools = [
         flags: { type: "string", description: "Sed flags. Default g." },
         backup: { type: "boolean", description: "Backup before patch. Default true." },
         sudo: { type: "boolean", description: "Run mv via sudo." },
-        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["path"]
     }
@@ -389,9 +423,10 @@ const allTools = [
         retryDelayMs: {
           type: "number",
           description: "Base delay in ms between retries, multiplied by attempt number. Default 1500."
-        }
+        },
+        group: { type: "string", description: "Profile group name. Runs command on all profiles with matching group field." }
       },
-      required: ["targets", "command"]
+      required: ["command"]
     }
   },
   {
@@ -427,7 +462,8 @@ const allTools = [
         packages: { type: "array", items: { type: "string" }, description: "Package names." },
         sudo: { type: "boolean", description: "Use sudo -n. Default true." },
         timeoutMs: { type: "number", description: "Timeout ms. Default 120000." },
-        confirm: { type: "boolean", description: "Required true for install/remove/update/upgrade." }
+        confirm: { type: "boolean", description: "Required true for install/remove/update/upgrade." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["action"]
     }
@@ -444,7 +480,8 @@ const allTools = [
         user: { type: "string", description: "Crontab owner. Omit for current SSH user." },
         schedule: { type: "string", description: "Cron schedule, 5 fields (e.g. '0 * * * *'). Required for add." },
         command: { type: "string", description: "Command. Required for add/remove." },
-        confirm: { type: "boolean", description: "Required true for add/remove." }
+        confirm: { type: "boolean", description: "Required true for add/remove." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["action"]
     }
@@ -561,7 +598,8 @@ const allTools = [
           description: "Persistence method. Default auto-detects from the running system."
         },
         timeoutMs: { type: "number", description: "Timeout ms. Default 60000." },
-        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       }
     }
   },
@@ -625,7 +663,8 @@ const allTools = [
         createHome: { type: "boolean", description: "Create home directory on add (default true)." },
         removeHome: { type: "boolean", description: "Remove home directory and mail spool on del (default false)." },
         sudo: { type: "boolean", description: "Run via sudo. Default true for this tool." },
-        confirm: { type: "boolean", description: "Required true for add/del/mod/passwd/lock/unlock." }
+        confirm: { type: "boolean", description: "Required true for add/del/mod/passwd/lock/unlock." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["action"]
     }
@@ -644,7 +683,8 @@ const allTools = [
         group: { type: "string", description: "Group name to set." },
         recursive: { type: "boolean", description: "Apply recursively (-R). Default false." },
         sudo: { type: "boolean", description: "Run via sudo. Default false." },
-        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." }
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
       },
       required: ["path"]
     }
@@ -667,7 +707,154 @@ const allTools = [
         runas: { type: "string", description: "Run-as spec. Default ALL:ALL." },
         nopasswd: { type: "boolean", description: "Add NOPASSWD flag (no password prompt). Default true." },
         ruleFile: { type: "string", description: "Custom sudoers.d file path. Default /etc/sudoers.d/<username>." },
-        confirm: { type: "boolean", description: "Required true for add/remove." }
+        confirm: { type: "boolean", description: "Required true for add/remove." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
+      },
+      required: ["action"]
+    }
+  }
+  ,{
+    name: "ssh_ping",
+    title: "SSH Ping (TCP Check)",
+    description: "Check TCP reachability of a profile's host:port without authenticating. Returns latency in ms and open/closed status. Use to verify connectivity before SSH operations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile name or user@host or host." },
+        host: { type: "string", description: "Hostname or IP. Used if target not provided." },
+        port: { type: "number", description: "Port to check. Defaults to profile port or 22." },
+        timeoutMs: { type: "number", description: "Connect timeout in ms. Default 5000." },
+        count: { type: "number", description: "Number of ping attempts. Default 3." }
+      }
+    }
+  }
+  ,{
+    name: "ssh_diff",
+    title: "SSH File Diff",
+    description: "Compare a file on a remote host against a local file or a second remote file. Returns unified diff output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host for the remote file." },
+        remotePath: { type: "string", description: "Absolute path to file on remote host." },
+        localPath: { type: "string", description: "Absolute path to local file to compare against. Mutually exclusive with target2/remotePath2." },
+        target2: { type: "string", description: "Second remote profile for remote-vs-remote diff." },
+        remotePath2: { type: "string", description: "Path on second remote host." },
+        context: { type: "number", description: "Lines of context in diff output. Default 3." }
+      },
+      required: ["target", "remotePath"]
+    }
+  }
+  ,{
+    name: "ssh_script",
+    title: "SSH Run Local Script",
+    description: "Upload and run a local script file on a remote host by piping it to bash. Safer than building commands inline. Requires confirm:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        localScript: { type: "string", description: "Absolute path to local script file to execute on remote." },
+        args: { type: "array", items: { type: "string" }, description: "Positional arguments passed to the script (appended as env vars SSH_OPS_ARG_1, SSH_OPS_ARG_2, ...)." },
+        sudo: { type: "boolean", description: "Run with sudo on remote." },
+        cwd: { type: "string", description: "Working directory on remote." },
+        timeoutMs: { type: "number", description: "Timeout in ms. Default 120000." },
+        confirm: { type: "boolean", description: "Required true to execute." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
+      },
+      required: ["localScript"]
+    }
+  }
+  ,{
+    name: "ssh_docker",
+    title: "SSH Docker Management",
+    description: "Manage Docker containers on a remote host. List containers, fetch logs, restart/stop/inspect. Mutating actions require confirm:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["list", "logs", "restart", "stop", "start", "inspect", "stats"],
+          description: "Docker action."
+        },
+        container: { type: "string", description: "Container name or ID. Required for logs/restart/stop/start/inspect." },
+        lines: { type: "number", description: "Log lines to fetch (logs action). Default 100." },
+        since: { type: "string", description: "Show logs since timestamp/duration e.g. '1h' (logs action)." },
+        sudo: { type: "boolean", description: "Run docker with sudo. Default false." },
+        confirm: { type: "boolean", description: "Required true for restart/stop/start." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
+      },
+      required: ["action"]
+    }
+  }
+  ,{
+    name: "ssh_metrics",
+    title: "SSH System Metrics",
+    description: "Fetch structured system metrics from a remote host: CPU%, memory%, disk I/O, network I/O, load average, uptime. Reads /proc directly — no external monitoring agent required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        timeoutMs: { type: "number", description: "Timeout in ms. Default 30000." }
+      }
+    }
+  }
+  ,{
+    name: "ssh_transfer",
+    title: "SSH File Transfer",
+    description: "Transfer files between local and remote hosts, or between two remote hosts, using scp. Requires confirm:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        src: { type: "string", description: "Source. Local absolute path, or 'profile:path' / 'user@host:path' for remote." },
+        dst: { type: "string", description: "Destination. Local absolute path, or 'profile:path' / 'user@host:path' for remote." },
+        recursive: { type: "boolean", description: "Copy directories recursively (-r flag)." },
+        confirm: { type: "boolean", description: "Required true to execute." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
+      },
+      required: ["src", "dst"]
+    }
+  }
+  ,{
+    name: "ssh_env",
+    title: "SSH Environment Variables",
+    description: "Read, set, or unset system environment variables on a remote host via /etc/environment. Mutating actions require confirm:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["list", "get", "set", "unset"],
+          description: "Action to perform."
+        },
+        key: { type: "string", description: "Variable name. Required for get/set/unset." },
+        value: { type: "string", description: "Value to set. Required for set action." },
+        confirm: { type: "boolean", description: "Required true for set/unset." },
+        reason: { type: "string", description: "Optional reason logged to audit log." }
+      },
+      required: ["action"]
+    }
+  }
+  ,{
+    name: "ssh_process",
+    title: "SSH Process Management",
+    description: "List running processes or kill a process by PID or name on a remote host. kill action requires confirm:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        action: {
+          type: "string",
+          enum: ["list", "kill"],
+          description: "list: snapshot of running processes. kill: send signal to process."
+        },
+        pid: { type: "number", description: "PID to kill. Mutually exclusive with processName." },
+        processName: { type: "string", description: "Process name pattern to kill (uses pkill). Mutually exclusive with pid." },
+        signal: { type: "string", description: "Signal to send. Default TERM. Use KILL for force-kill." },
+        filter: { type: "string", description: "Filter string for list action (grep pattern)." },
+        confirm: { type: "boolean", description: "Required true for kill." },
+        reason: { type: "string", description: "Optional reason logged to audit log." }
       },
       required: ["action"]
     }
@@ -726,7 +913,20 @@ const handlers = {
   async "tools/call"(message) {
     const name = message.params?.name;
     const args = message.params?.arguments || {};
-    return callTool(name, args);
+    try {
+      const cfg = getConfig();
+      const limit = cfg.rateLimitPerMin ?? 60;
+      const target = args?.target || args?.host || "__default__";
+      const rateLimitErr = checkRateLimit(target, limit);
+      if (rateLimitErr) {
+        const result = textResult(rateLimitErr, true);
+        writeAuditLog(name, args, result);
+        return result;
+      }
+    } catch {}
+    const result = await callTool(name, args);
+    writeAuditLog(name, args, result);
+    return result;
   },
 
   ping() {
@@ -896,12 +1096,49 @@ async function callTool(name, args) {
     return textResult(JSON.stringify(listProfiles(), null, 2));
   }
 
+  if (name === "ssh_ping") {
+    const { resolveTarget } = await import("./ssh-core.mjs");
+    let host = args.host;
+    let port = args.port || 22;
+    try {
+      const info = resolveTarget({ target: args.target, host: args.host });
+      host = host || info.options.host || (info.target.includes("@") ? info.target.split("@")[1] : info.target);
+      port = args.port || info.options.port || 22;
+    } catch {}
+    if (!host) return textResult("host or target required.", true);
+    const timeoutMs = args.timeoutMs || 5000;
+    const count = Math.min(Math.max(1, args.count || 3), 10);
+    const results = [];
+    for (let i = 0; i < count; i++) {
+      const start = Date.now();
+      const ok = await new Promise((resolve) => {
+        const sock = net.createConnection({ host, port, timeout: timeoutMs });
+        sock.once("connect", () => { sock.destroy(); resolve(true); });
+        sock.once("timeout", () => { sock.destroy(); resolve(false); });
+        sock.once("error", () => resolve(false));
+      });
+      results.push(ok ? Date.now() - start : null);
+      if (i < count - 1) await new Promise(r => setTimeout(r, 200));
+    }
+    const successes = results.filter(r => r !== null);
+    const avgMs = successes.length ? Math.round(successes.reduce((a, b) => a + b, 0) / successes.length) : null;
+    return textResult(JSON.stringify({
+      host, port,
+      reachable: successes.length > 0,
+      attempts: count,
+      successCount: successes.length,
+      avgLatencyMs: avgMs,
+      results: results.map(r => r === null ? "timeout" : `${r}ms`)
+    }, null, 2));
+  }
+
   if (name === "ssh_run") {
     if (args.sudo === true && args.confirm !== true) {
-      return textResult(`ssh_run with sudo:true requires confirm:true. Set confirm:true to execute with elevated privileges.`, true);
+      return requireConfirm(name, args);
     }
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
+    if (args.dryRun === true) return dryRunResult(name, args, args.command, args.target || args.host);
     const result = await runSshCommand({ retries: args.retries ?? 0, retryDelayMs: args.retryDelayMs ?? 1500, ...args });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -921,6 +1158,33 @@ async function callTool(name, args) {
   if (name === "ssh_health_report") {
     const command = healthReportScript();
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
+    // Alert webhook if configured and thresholds breached
+    try {
+      const cfg = getConfig();
+      if (cfg.alertWebhook && result.exitCode === 0) {
+        const thresholds = cfg.alertThresholds || {};
+        const cpuLimit = thresholds.cpuPercent ?? 95;
+        const memLimit = thresholds.memPercent ?? 95;
+        const diskLimit = thresholds.diskPercent ?? 90;
+        const metrics = parseHealthMetrics(result.stdout || "");
+        const breaches = [];
+        if (metrics.cpuPercent !== undefined && metrics.cpuPercent > cpuLimit)
+          breaches.push(`CPU ${metrics.cpuPercent}% > ${cpuLimit}%`);
+        if (metrics.memPercent !== undefined && metrics.memPercent > memLimit)
+          breaches.push(`Memory ${metrics.memPercent}% > ${memLimit}%`);
+        if (metrics.diskPercent !== undefined && metrics.diskPercent > diskLimit)
+          breaches.push(`Disk ${metrics.diskPercent}% > ${diskLimit}%`);
+        if (breaches.length > 0) {
+          void sendAlert(cfg.alertWebhook, {
+            text: `ssh-ops health alert on ${result.targetLabel || args.target || "unknown"}: ${breaches.join(", ")}`,
+            target: result.targetLabel || args.target,
+            breaches,
+            metrics,
+            ts: new Date().toISOString()
+          });
+        }
+      }
+    } catch {}
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
@@ -936,13 +1200,14 @@ async function callTool(name, args) {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
     if (args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_file_write.`, true);
+      return requireConfirm(name, args);
     }
     const command = fileWriteScript(args.path, args.content, {
       backup: args.backup !== false,
       sudo: Boolean(args.sudo),
       encoding: args.encoding
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -952,11 +1217,12 @@ async function callTool(name, args) {
     if (validErr) return textResult(validErr, true);
     const mutatingActions = { start: true, stop: true, restart: true, enable: true, disable: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_service.`, true);
+      return requireConfirm(name, args);
     }
     const command = serviceScript(args.service, args.action, {
       sudo: args.sudo !== false
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -971,7 +1237,7 @@ async function callTool(name, args) {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
     if (args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_file_patch.`, true);
+      return requireConfirm(name, args);
     }
     const command = filePatchScript(args.path, {
       startLine: args.startLine,
@@ -983,13 +1249,14 @@ async function callTool(name, args) {
       backup: args.backup !== false,
       sudo: Boolean(args.sudo)
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   if (name === "ssh_run_multi") {
     if (args.sudo === true && args.confirm !== true) {
-      return textResult(`ssh_run_multi with sudo:true requires confirm:true. Set confirm:true to execute with elevated privileges.`, true);
+      return requireConfirm(name, args);
     }
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
@@ -1020,7 +1287,14 @@ async function callTool(name, args) {
       retryDelayMs
     };
 
-    const results = await runBatched(args.targets, (target) =>
+    let targets = Array.isArray(args.targets) ? args.targets : [args.target || args.host].filter(Boolean);
+    if (args.group) {
+      const groupTargets = resolveGroup(args.group);
+      targets = [...new Set([...targets, ...groupTargets])];
+    }
+    if (targets.length === 0) return textResult("No targets specified. Provide targets array, target, host, or group.", true);
+
+    const results = await runBatched(targets, (target) =>
       runMultiSshCommand([target], perTargetOpts).then((r) => r[0])
     );
     const text = formatMultiRunResult(results, args.format || "text");
@@ -1044,13 +1318,14 @@ async function callTool(name, args) {
     if (validErr) return textResult(validErr, true);
     const mutatingActions = { install: true, remove: true, update: true, upgrade: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_package.`, true);
+      return requireConfirm(name, args);
     }
     const command = packageScript({
       action: args.action,
       packages: Array.isArray(args.packages) ? args.packages : [],
       sudo: args.sudo !== false
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -1058,7 +1333,7 @@ async function callTool(name, args) {
   if (name === "ssh_cron") {
     const mutatingActions = { add: true, remove: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_cron.`, true);
+      return requireConfirm(name, args);
     }
     const command = cronScript({
       action: args.action,
@@ -1066,13 +1341,14 @@ async function callTool(name, args) {
       schedule: args.schedule,
       command: args.command
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   if (name === "ssh_add_profile") {
     if (args.confirm !== true) {
-      return textResult(`ssh_add_profile requires confirm:true. Adding profiles changes persistent SSH configuration.`, true);
+      return requireConfirm(name, args);
     }
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
@@ -1094,7 +1370,7 @@ async function callTool(name, args) {
 
   if (name === "ssh_remove_profile") {
     if (args.confirm !== true) {
-      return textResult(`ssh_remove_profile requires confirm:true.`, true);
+      return requireConfirm(name, args);
     }
     const profiles = removeProfile(args.name);
     return textResult(JSON.stringify(profiles, null, 2));
@@ -1102,7 +1378,7 @@ async function callTool(name, args) {
 
   if (name === "ssh_add_jump") {
     if (args.confirm !== true) {
-      return textResult(`ssh_add_jump requires confirm:true. Adding jump servers modifies the SSH routing chain.`, true);
+      return requireConfirm(name, args);
     }
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
@@ -1125,7 +1401,7 @@ async function callTool(name, args) {
 
   if (name === "ssh_remove_jump") {
     if (args.confirm !== true) {
-      return textResult(`ssh_remove_jump requires confirm:true.`, true);
+      return requireConfirm(name, args);
     }
     const result = removeJumpServer(args.name);
     return textResult(JSON.stringify(result, null, 2));
@@ -1147,7 +1423,7 @@ async function callTool(name, args) {
 
   if (name === "ssh_ip_assign") {
     if (args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_ip_assign.`, true);
+      return requireConfirm(name, args);
     }
     let resolved = { iface: args.iface, ips: args.ips, gateway: args.gateway, dns: args.dns };
 
@@ -1187,6 +1463,7 @@ async function callTool(name, args) {
       dns: resolved.dns,
       method: args.method || "auto"
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({
       ...args,
       command,
@@ -1222,7 +1499,7 @@ async function callTool(name, args) {
   if (name === "ssh_user") {
     const mutatingActions = { add: true, del: true, mod: true, passwd: true, lock: true, unlock: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_user.`, true);
+      return requireConfirm(name, args);
     }
     const command = userManageScript({
       action: args.action,
@@ -1236,6 +1513,7 @@ async function callTool(name, args) {
       createHome: args.createHome !== false,
       removeHome: Boolean(args.removeHome)
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({
       ...args,
       command,
@@ -1249,7 +1527,7 @@ async function callTool(name, args) {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
     if (args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_chmod.`, true);
+      return requireConfirm(name, args);
     }
     const command = chmodScript({
       path: args.path,
@@ -1258,6 +1536,7 @@ async function callTool(name, args) {
       group: args.group,
       recursive: Boolean(args.recursive)
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({
       ...args,
       command,
@@ -1272,7 +1551,7 @@ async function callTool(name, args) {
     if (validErr) return textResult(validErr, true);
     const mutatingActions = { add: true, remove: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
-      return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_sudo_rule.`, true);
+      return requireConfirm(name, args);
     }
     if (args.action === "add") {
       const cmds = args.commands;
@@ -1292,6 +1571,7 @@ async function callTool(name, args) {
       nopasswd: args.nopasswd === true,
       ruleFile: args.ruleFile
     });
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({
       ...args,
       command,
@@ -1301,7 +1581,314 @@ async function callTool(name, args) {
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
+  if (name === "ssh_diff") {
+    if (!args.remotePath || !args.remotePath.startsWith("/")) {
+      return textResult("remotePath must be an absolute path.", true);
+    }
+    const context = Math.min(Math.max(0, Number(args.context) || 3), 20);
+    const cmd1 = fileReadScript(args.remotePath, 2_000_000);
+    const res1 = await runSshCommand({ ...args, command: cmd1, mode: "bash" });
+    if (res1.exitCode !== 0) return textResult(`Failed to read remote file: ${res1.stderr}`, true);
+    const remoteContent = res1.stdout;
+
+    let localContent;
+    if (args.localPath) {
+      if (!args.localPath.startsWith("/")) return textResult("localPath must be absolute.", true);
+      try { localContent = readFileSync(args.localPath, "utf8"); } catch (e) {
+        return textResult(`Cannot read local file: ${e.message}`, true);
+      }
+    } else if (args.target2 && args.remotePath2) {
+      if (!args.remotePath2.startsWith("/")) return textResult("remotePath2 must be absolute.", true);
+      const cmd2 = fileReadScript(args.remotePath2, 2_000_000);
+      const res2 = await runSshCommand({ ...args, target: args.target2, host: undefined, command: cmd2, mode: "bash" });
+      if (res2.exitCode !== 0) return textResult(`Failed to read remote2 file: ${res2.stderr}`, true);
+      localContent = res2.stdout;
+    } else {
+      return textResult("Provide localPath or target2+remotePath2.", true);
+    }
+
+    const diff = unifiedDiff(
+      args.localPath || `${args.target2}:${args.remotePath2}`,
+      `${args.target || "remote"}:${args.remotePath}`,
+      localContent, remoteContent, context
+    );
+    return textResult(diff || "(files are identical)");
+  }
+
+  if (name === "ssh_script") {
+    if (args.confirm !== true) {
+      return requireConfirm(name, args);
+    }
+    if (!args.localScript || !args.localScript.startsWith("/")) {
+      return textResult("localScript must be an absolute path.", true);
+    }
+    // Restrict localScript to PLUGIN_ROOT for security
+    const { resolve: pathResolve } = await import("node:path");
+    const resolvedScript = pathResolve(args.localScript);
+    if (!resolvedScript.startsWith(PLUGIN_ROOT + "/")) {
+      return textResult(`localScript must be within the plugin directory (${PLUGIN_ROOT}).`, true);
+    }
+    let scriptContent;
+    try { scriptContent = readFileSync(resolvedScript, "utf8"); } catch (e) {
+      return textResult(`Cannot read script file: ${e.message}`, true);
+    }
+    // Prepend arg exports if provided
+    const scriptArgs = Array.isArray(args.args) ? args.args : [];
+    const argExports = scriptArgs.map((a, i) => `export SSH_OPS_ARG_${i + 1}=${JSON.stringify(String(a))}`).join("\n");
+    const fullScript = argExports ? `${argExports}\n${scriptContent}` : scriptContent;
+    const result = await runSshCommand({
+      ...args,
+      command: fullScript,
+      mode: "bash",
+      sudo: Boolean(args.sudo),
+      timeoutMs: args.timeoutMs || 120_000
+    });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_docker") {
+    const validActions = ["list", "logs", "restart", "stop", "start", "inspect", "stats"];
+    if (!validActions.includes(args.action)) {
+      return textResult(`action must be one of: ${validActions.join(", ")}`, true);
+    }
+    const mutating = ["restart", "stop", "start"];
+    if (mutating.includes(args.action) && args.confirm !== true) {
+      return requireConfirm(name, args);
+    }
+    if (args.action !== "list" && args.action !== "stats" && !args.container) {
+      return textResult("container name or ID required for this action.", true);
+    }
+    const sudo = args.sudo ? "sudo " : "";
+    let command;
+    if (args.action === "list") {
+      command = `set +e\n${sudo}docker ps -a --format '{{json .}}' 2>&1 | head -c 500000\n`;
+    } else if (args.action === "logs") {
+      const lines = Math.min(Number(args.lines) || 100, 5000);
+      const since = args.since ? ` --since ${JSON.stringify(String(args.since))}` : "";
+      command = `set +e\n${sudo}docker logs --tail ${lines}${since} ${JSON.stringify(String(args.container))} 2>&1\n`;
+    } else if (args.action === "inspect") {
+      command = `set +e\n${sudo}docker inspect ${JSON.stringify(String(args.container))} 2>&1\n`;
+    } else if (args.action === "stats") {
+      command = `set +e\n${sudo}docker stats --no-stream --format '{{json .}}' 2>&1\n`;
+    } else {
+      command = `set +e\n${sudo}docker ${args.action} ${JSON.stringify(String(args.container))} 2>&1\n`;
+    }
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_transfer") {
+    if (args.confirm !== true) {
+      return requireConfirm(name, args);
+    }
+    if (!args.src || !args.dst) return textResult("src and dst are required.", true);
+
+    // Resolve 'profile:path' notation to 'user@host:path' for scp
+    async function resolveScpAddr(addr) {
+      if (!addr.includes(":")) return addr; // local path — no colon means local
+      const colonIdx = addr.indexOf(":");
+      const profileOrHost = addr.slice(0, colonIdx);
+      const remotePath = addr.slice(colonIdx + 1);
+      // Try to resolve as profile
+      try {
+        const { resolveTarget: rt } = await import("./ssh-core.mjs");
+        const info = rt({ target: profileOrHost });
+        return `${info.target}:${remotePath}`;
+      } catch {
+        return addr; // already user@host:path
+      }
+    }
+
+    const scpSrc = await resolveScpAddr(args.src);
+    const scpDst = await resolveScpAddr(args.dst);
+    const { spawn } = await import("node:child_process");
+    const scpArgs = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
+    if (args.recursive) scpArgs.push("-r");
+    scpArgs.push(scpSrc, scpDst);
+
+    if (args.dryRun === true) {
+      return textResult(JSON.stringify({ dryRun: true, tool: name, command: `scp ${scpArgs.join(" ")}`, note: "dryRun:true — nothing executed" }, null, 2));
+    }
+
+    const result = await new Promise((resolve) => {
+      let stdout = "", stderr = "";
+      const proc = spawn("scp", scpArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      proc.stdout.on("data", d => { stdout += d; });
+      proc.stderr.on("data", d => { stderr += d; });
+      proc.on("close", code => resolve({ stdout, stderr, exitCode: code }));
+      proc.on("error", e => resolve({ stdout: "", stderr: e.message, exitCode: 1 }));
+    });
+
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim() || "(transfer complete)";
+    return textResult(output, result.exitCode !== 0);
+  }
+
+  if (name === "ssh_env") {
+    const validActions = ["list", "get", "set", "unset"];
+    if (!validActions.includes(args.action)) {
+      return textResult(`action must be one of: ${validActions.join(", ")}`, true);
+    }
+    if (["set", "unset"].includes(args.action) && args.confirm !== true) {
+      return requireConfirm(name, args);
+    }
+    if (["get", "set", "unset"].includes(args.action) && !args.key) {
+      return textResult("key is required.", true);
+    }
+    if (args.key && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(args.key)) {
+      return textResult("key must be a valid env var name ([a-zA-Z_][a-zA-Z0-9_]*).", true);
+    }
+    if (args.action === "set" && args.value === undefined) {
+      return textResult("value is required for set.", true);
+    }
+
+    let command;
+    if (args.action === "list") {
+      command = `set +e\nexport LC_ALL=C\ncat /etc/environment 2>/dev/null || echo "(empty)"\n`;
+    } else if (args.action === "get") {
+      const keyQ = JSON.stringify(String(args.key));
+      command = `set +e\nexport LC_ALL=C\ngrep -E "^${args.key}=" /etc/environment 2>/dev/null || echo "${args.key} not set in /etc/environment"\n`;
+    } else if (args.action === "set") {
+      const keyQ = String(args.key);
+      const valQ = String(args.value).replace(/'/g, "'\\''");
+      command = `set +e
+export LC_ALL=C
+_f=/etc/environment
+_key=${JSON.stringify(keyQ)}
+_val=${JSON.stringify(valQ)}
+if grep -qE "^${keyQ}=" "$_f" 2>/dev/null; then
+  sed -i "s|^${keyQ}=.*|${keyQ}=$_val|" "$_f" && echo "Updated ${keyQ} in $_f"
+else
+  echo "${keyQ}=$_val" >> "$_f" && echo "Added ${keyQ} to $_f"
+fi
+`;
+    } else {
+      command = `set +e
+export LC_ALL=C
+_f=/etc/environment
+if grep -qE "^${args.key}=" "$_f" 2>/dev/null; then
+  sed -i "/^${args.key}=/d" "$_f" && echo "Removed ${args.key} from $_f"
+else
+  echo "${args.key} not found in $_f"
+fi
+`;
+    }
+
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
+    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: ["set", "unset"].includes(args.action) });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_process") {
+    if (!["list", "kill"].includes(args.action)) {
+      return textResult("action must be list or kill.", true);
+    }
+    if (args.action === "kill" && args.confirm !== true) {
+      return requireConfirm(name, args);
+    }
+    if (args.action === "kill" && !args.pid && !args.processName) {
+      return textResult("pid or processName required for kill.", true);
+    }
+
+    let command;
+    if (args.action === "list") {
+      const filter = args.filter ? ` | grep -i ${JSON.stringify(String(args.filter))}` : "";
+      command = `set +e\nexport LC_ALL=C\nps aux --sort=-%cpu${filter} 2>/dev/null || ps aux${filter}\n`;
+    } else {
+      const signal = /^[A-Z0-9]+$/.test(String(args.signal || "TERM")) ? String(args.signal || "TERM") : "TERM";
+      if (args.pid) {
+        const pid = Math.floor(Number(args.pid));
+        if (!Number.isFinite(pid) || pid < 1) return textResult("pid must be a positive integer.", true);
+        command = `set +e\nexport LC_ALL=C\nkill -${signal} ${pid} && echo "Sent ${signal} to PID ${pid}" || echo "kill failed"\n`;
+      } else {
+        command = `set +e\nexport LC_ALL=C\npkill -${signal} -f ${JSON.stringify(String(args.processName))} && echo "Sent ${signal} to processes matching '${args.processName}'" || echo "No matching processes found"\n`;
+      }
+    }
+
+    if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
+    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
+  if (name === "ssh_metrics") {
+    const command = `set +e
+export LC_ALL=C
+
+# CPU usage (1-second sample via /proc/stat)
+read -r cpu1 < /proc/stat
+cpu1_arr=($cpu1)
+sleep 1
+read -r cpu2 < /proc/stat
+cpu2_arr=($cpu2)
+idle1=\${cpu1_arr[4]}; total1=0; for v in "\${cpu1_arr[@]:1}"; do total1=$((total1+v)); done
+idle2=\${cpu2_arr[4]}; total2=0; for v in "\${cpu2_arr[@]:1}"; do total2=$((total2+v)); done
+cpu_pct=$(awk "BEGIN{printf \\"%.1f\\", 100*(1-($idle2-$idle1)/($total2-$total1))}")
+
+# Memory
+mem=$(awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{printf "%.1f", 100*(t-a)/t}' /proc/meminfo)
+mem_total=$(awk '/^MemTotal/{printf "%d",$2/1024}' /proc/meminfo)
+mem_used=$(awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{printf "%d",(t-a)/1024}' /proc/meminfo)
+
+# Load average
+load=$(cat /proc/loadavg | awk '{print $1,$2,$3}')
+load1=$(echo $load | cut -d' ' -f1)
+load5=$(echo $load | cut -d' ' -f2)
+load15=$(echo $load | cut -d' ' -f3)
+
+# Uptime seconds
+uptime_sec=$(awk '{print int($1)}' /proc/uptime)
+
+# Disk I/O (delta over 1s already done above; just report current from /proc/diskstats)
+disk_reads=$(awk '{sum+=$6}END{print sum}' /proc/diskstats)
+disk_writes=$(awk '{sum+=$10}END{print sum}' /proc/diskstats)
+
+# Network I/O totals
+net_rx=$(awk 'NR>2{rx+=$2}END{print rx}' /proc/net/dev)
+net_tx=$(awk 'NR>2{tx+=$10}END{print tx}' /proc/net/dev)
+
+printf '{"cpuPercent":%s,"memPercent":%s,"memUsedMB":%s,"memTotalMB":%s,"loadAvg":{"1m":%s,"5m":%s,"15m":%s},"uptimeSeconds":%s,"diskReadSectors":%s,"diskWriteSectors":%s,"netRxBytes":%s,"netTxBytes":%s}\\n' \\
+  "$cpu_pct" "$mem" "$mem_used" "$mem_total" "$load1" "$load5" "$load15" "$uptime_sec" "$disk_reads" "$disk_writes" "$net_rx" "$net_tx"
+`;
+    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 30_000 });
+    return textResult(formatRunResult(result), result.exitCode !== 0);
+  }
+
   return textResult(`Unknown tool: ${name}`, true);
+}
+
+const AUDIT_LOG = join(PLUGIN_ROOT, "ssh-ops-audit.log");
+function writeAuditLog(name, args, result) {
+  try {
+    const safeArgs = { ...args };
+    if (safeArgs.password) safeArgs.password = "[REDACTED]";
+    if (safeArgs.content && String(safeArgs.content).length > 200) safeArgs.content = "[TRUNCATED]";
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
+      tool: name,
+      args: safeArgs,
+      isError: result?.isError ?? false
+    }) + "\n";
+    appendFileSync(AUDIT_LOG, entry);
+  } catch {}
+}
+
+const _rateLimitWindows = new Map(); // target → timestamps[]
+
+function checkRateLimit(target, limitPerMin) {
+  if (!limitPerMin || limitPerMin <= 0) return null;
+  const now = Date.now();
+  const window = 60_000;
+  const key = target || "__default__";
+  let timestamps = _rateLimitWindows.get(key) || [];
+  timestamps = timestamps.filter(t => now - t < window);
+  if (timestamps.length >= limitPerMin) {
+    const oldest = timestamps[0];
+    const retryAfterSec = Math.ceil((oldest + window - now) / 1000);
+    return `Rate limit exceeded for target "${key}" (${limitPerMin} calls/min). Retry after ${retryAfterSec}s.`;
+  }
+  timestamps.push(now);
+  _rateLimitWindows.set(key, timestamps);
+  return null;
 }
 
 function textResult(text, isError = false) {
@@ -1314,6 +1901,70 @@ function textResult(text, isError = false) {
     ],
     isError
   };
+}
+
+function requireConfirm(toolName, args) {
+  const reasonNote = args.reason ? ` Stated reason: "${args.reason}".` : "";
+  return textResult(`${toolName} requires confirm:true to execute.${reasonNote}`, true);
+}
+
+function dryRunResult(toolName, args, command, target) {
+  return textResult(JSON.stringify({
+    dryRun: true,
+    tool: toolName,
+    target: target || args.target || args.host || "(default)",
+    sudo: Boolean(args.sudo),
+    command: command || null,
+    note: "dryRun:true — nothing executed"
+  }, null, 2));
+}
+
+function unifiedDiff(labelA, labelB, textA, textB, context = 3) {
+  const linesA = textA.split("\n");
+  const linesB = textB.split("\n");
+  const m = linesA.length, n = linesB.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = linesA[i] === linesB[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < m || j < n) {
+    if (i < m && j < n && linesA[i] === linesB[j]) {
+      ops.push({ type: "=", a: i, b: j }); i++; j++;
+    } else if (j < n && (i >= m || dp[i + 1][j] >= dp[i][j + 1])) {
+      ops.push({ type: "+", b: j }); j++;
+    } else {
+      ops.push({ type: "-", a: i }); i++;
+    }
+  }
+  const changed = ops.reduce((acc, op, idx) => { if (op.type !== "=") acc.push(idx); return acc; }, []);
+  if (changed.length === 0) return "";
+  const hunks = [];
+  let h = null;
+  for (const ci of changed) {
+    const start = Math.max(0, ci - context), end = Math.min(ops.length - 1, ci + context);
+    if (!h || start > h.end + 1) { if (h) hunks.push(h); h = { start, end, ops: [] }; }
+    h.end = Math.max(h.end, end);
+  }
+  if (h) hunks.push(h);
+  const out = [`--- ${labelA}`, `+++ ${labelB}`];
+  for (const hunk of hunks) {
+    const slice = ops.slice(hunk.start, hunk.end + 1);
+    const aStart = slice.find(o => o.a !== undefined)?.a ?? 0;
+    const bStart = slice.find(o => o.b !== undefined)?.b ?? 0;
+    const aCount = slice.filter(o => o.type !== "+").length;
+    const bCount = slice.filter(o => o.type !== "-").length;
+    out.push(`@@ -${aStart + 1},${aCount} +${bStart + 1},${bCount} @@`);
+    for (const op of slice) {
+      if (op.type === "=") out.push(` ${linesA[op.a]}`);
+      else if (op.type === "+") out.push(`+${linesB[op.b]}`);
+      else out.push(`-${linesA[op.a]}`);
+    }
+  }
+  return out.join("\n");
 }
 
 let buffer = "";

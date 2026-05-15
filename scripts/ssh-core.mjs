@@ -418,11 +418,23 @@ export function listProfiles() {
             user: profile.user || null,
             port: profile.port || 22,
             hasIdentityFile: Boolean(profile.identityFile),
-            extraArgs: Array.isArray(profile.extraArgs) ? profile.extraArgs : []
+            extraArgs: Array.isArray(profile.extraArgs) ? profile.extraArgs : [],
+            ...(Array.isArray(profile.allowedCommands) && profile.allowedCommands.length > 0 && { allowedCommands: profile.allowedCommands }),
+            ...(profile.group && { group: profile.group }),
+            ...(profile.extends && { extends: profile.extends })
           }
         ])
     )
   };
+}
+
+export function resolveGroup(groupName) {
+  const config = loadConfig();
+  const matched = Object.entries(config.profiles)
+    .filter(([, p]) => p.group === groupName && !p.hidden)
+    .map(([name]) => name);
+  if (matched.length === 0) throw new Error(`No profiles found in group "${groupName}".`);
+  return matched;
 }
 
 export function getConfig() {
@@ -585,9 +597,18 @@ export function resolveTarget(input = {}) {
 
   const profile = config.profiles[requestedTarget] || {};
   const usingProfile = Boolean(config.profiles[requestedTarget]);
+
+  // Resolve profile inheritance (single level — extends: parent-profile-name)
+  let resolvedProfile = profile;
+  if (profile.extends) {
+    const parent = config.profiles[profile.extends];
+    if (!parent) throw new Error(`Profile "${requestedTarget}" extends "${profile.extends}" which is not defined.`);
+    resolvedProfile = { ...parent, ...profile, extends: undefined };
+  }
+
   const merged = {
     ...(config.defaults || {}),
-    ...profile,
+    ...resolvedProfile,
     ...input
   };
 
@@ -705,6 +726,28 @@ export async function runSshCommand(input = {}) {
   }
 
   const targetInfo = resolveTarget(input);
+  // Enforce allowedCommands policy if defined on the resolved profile
+  if (Array.isArray(targetInfo.options.allowedCommands) && targetInfo.options.allowedCommands.length > 0) {
+    const cmd = String(input.command).trim();
+    const permitted = targetInfo.options.allowedCommands.some((pattern) => {
+      const p = String(pattern).trim();
+      return cmd === p || cmd.startsWith(p + " ") || cmd.startsWith(p + "\n");
+    });
+    if (!permitted) {
+      return {
+        stdout: "",
+        stderr: `Command blocked by allowedCommands policy for profile "${targetInfo.targetLabel}". Allowed prefixes: ${targetInfo.options.allowedCommands.join(", ")}`,
+        exitCode: 1,
+        timedOut: false,
+        truncated: false,
+        target: targetInfo.target,
+        targetLabel: targetInfo.targetLabel,
+        remoteJump: targetInfo.remoteJump ?? null,
+        sudo: false,
+        durationMs: 0
+      };
+    }
+  }
   const timeoutMs = Number(targetInfo.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const mode = input.mode || "bash";
   const sshArgs = [...targetInfo.sshArgs, targetInfo.target];

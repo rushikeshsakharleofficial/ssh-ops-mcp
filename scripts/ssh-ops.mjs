@@ -186,6 +186,138 @@ try {
     process.exit(0);
   }
 
+  if (command === "export") {
+    const { createInterface } = await import("node:readline");
+    const { createCipheriv, pbkdf2Sync, randomBytes } = await import("node:crypto");
+    const { writeFileSync } = await import("node:fs");
+    const outFile = rest[0];
+    if (!outFile) { console.error("Usage: ssh-ops export <output-file.enc>"); process.exit(1); }
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const passphrase = await new Promise(res => rl.question("Passphrase: ", a => { rl.close(); res(a.trim()); }));
+    if (!passphrase) { console.error("Passphrase required."); process.exit(1); }
+
+    const profiles = listProfiles();
+    const payload = JSON.stringify(profiles);
+    const salt = randomBytes(16);
+    const key = pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const enc = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const bundle = JSON.stringify({
+      v: 1,
+      salt: salt.toString("hex"),
+      iv: iv.toString("hex"),
+      tag: tag.toString("hex"),
+      data: enc.toString("hex")
+    });
+    writeFileSync(outFile, bundle, { mode: 0o600 });
+    console.log(`Exported ${Object.keys(profiles.profiles || {}).length} profile(s) to ${outFile}`);
+    process.exit(0);
+  }
+
+  if (command === "import") {
+    const { createInterface } = await import("node:readline");
+    const { createDecipheriv, pbkdf2Sync } = await import("node:crypto");
+    const { readFileSync: rfs } = await import("node:fs");
+    const inFile = rest[0];
+    if (!inFile) { console.error("Usage: ssh-ops import <input-file.enc>"); process.exit(1); }
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const passphrase = await new Promise(res => rl.question("Passphrase: ", a => { rl.close(); res(a.trim()); }));
+    if (!passphrase) { console.error("Passphrase required."); process.exit(1); }
+
+    let bundle;
+    try { bundle = JSON.parse(rfs(inFile, "utf8")); } catch { console.error("Cannot read bundle file."); process.exit(1); }
+    if (bundle.v !== 1) { console.error("Unknown bundle version."); process.exit(1); }
+
+    const salt = Buffer.from(bundle.salt, "hex");
+    const key = pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
+    const iv = Buffer.from(bundle.iv, "hex");
+    const tag = Buffer.from(bundle.tag, "hex");
+    const enc = Buffer.from(bundle.data, "hex");
+    let payload;
+    try {
+      const decipher = createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(tag);
+      payload = decipher.update(enc, undefined, "utf8") + decipher.final("utf8");
+    } catch { console.error("Decryption failed — wrong passphrase or corrupted bundle."); process.exit(1); }
+
+    let imported;
+    try { imported = JSON.parse(payload); } catch { console.error("Bundle payload is not valid JSON."); process.exit(1); }
+
+    let count = 0;
+    for (const [name, prof] of Object.entries(imported.profiles || {})) {
+      try {
+        addProfile(name, { host: prof.host, user: prof.user, port: prof.port });
+        count++;
+      } catch {}
+    }
+    console.log(`Imported ${count} profile(s) from ${inFile}`);
+    process.exit(0);
+  }
+
+  if (command === "add") {
+    // Interactive profile wizard
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q) => new Promise(res => rl.question(q, res));
+
+    console.log("\n=== ssh-ops: Add Profile ===\n");
+    const name = (await ask("Profile name (e.g. prod-web): ")).trim();
+    if (!name) { console.error("Name required."); process.exit(1); }
+
+    const host = (await ask("Host or IP: ")).trim();
+    if (!host) { console.error("Host required."); process.exit(1); }
+
+    const user = (await ask("SSH user (leave blank for system default): ")).trim() || undefined;
+    const portStr = (await ask("Port (leave blank for 22): ")).trim();
+    const port = portStr ? Number(portStr) : undefined;
+    const identityFile = (await ask("Path to identity file (leave blank to skip): ")).trim() || undefined;
+    const jumpProfile = (await ask("Jump profile name (leave blank to skip): ")).trim() || undefined;
+
+    rl.close();
+
+    const profileData = {
+      host,
+      ...(user && { user }),
+      ...(port && { port }),
+      ...(identityFile && { identityFile }),
+      ...(jumpProfile && { jumpProfile })
+    };
+
+    console.log(`\nTesting connection to ${user ? user + "@" : ""}${host}${port ? ":" + port : ""}...`);
+    try {
+      const testResult = await runSshCommand({
+        target: host,
+        host,
+        user,
+        port,
+        identityFile,
+        command: "echo ssh-ops-test-ok",
+        timeoutMs: 10000
+      });
+      if (testResult.exitCode === 0 && testResult.stdout.includes("ssh-ops-test-ok")) {
+        console.log("✓ Connection successful.");
+      } else {
+        console.warn(`⚠ Connection test failed (exit ${testResult.exitCode}): ${testResult.stderr || testResult.stdout}`);
+        const proceed = (await (async () => {
+          const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+          return new Promise(res => rl2.question("Save anyway? (y/N): ", a => { rl2.close(); res(a); }));
+        })()).trim().toLowerCase();
+        if (proceed !== "y") { console.log("Aborted."); process.exit(0); }
+      }
+    } catch (e) {
+      console.warn(`⚠ Connection test error: ${e.message}`);
+    }
+
+    const result = addProfile(name, profileData);
+    console.log(`\nProfile "${name}" saved.`);
+    console.log(JSON.stringify(result.profiles[name], null, 2));
+    process.exit(0);
+  }
+
   if (command === "profile") {
     const sub = rest[0];
     const subRest = rest.slice(1);
@@ -286,6 +418,9 @@ Usage:
   node scripts/ssh-ops.mjs jump add <name> <host> [<user>]
   node scripts/ssh-ops.mjs jump remove <name>
   node scripts/ssh-ops.mjs jump list
+  node scripts/ssh-ops.mjs add                    — interactive wizard to add and test a new profile
+  node scripts/ssh-ops.mjs export <file.enc>      — export all profiles as encrypted bundle
+  node scripts/ssh-ops.mjs import <file.enc>      — import profiles from encrypted bundle
 
 Options (run/exec commands):
   --sudo                  Run command through sudo -n bash -s
