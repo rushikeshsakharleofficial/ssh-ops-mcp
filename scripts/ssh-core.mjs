@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, openSync, readdirSync, readFileSync, readSync, closeSync, statSync, writeFileSync } from "node:fs";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, closeSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -23,23 +23,148 @@ const HOME_CONFIG_FILES = [
   "ssh-ops.json"
 ];
 
-const DYNAMIC_CONFIG = join(PLUGIN_ROOT, "ssh-ops.dynamic.json");
+const DYNAMIC_CONFIG = join(PLUGIN_ROOT, "ssh-ops.dynamic.json"); // legacy path — kept for migration only
+const DYNAMIC_PROFILES_DIR = join(PLUGIN_ROOT, "ssh-ops-profiles");
+const PROFILES_INDEX = join(DYNAMIC_PROFILES_DIR, "_index.json");
 const ENCRYPTION_KEY_FILE = join(PLUGIN_ROOT, ".encryption-key");
 
-try {
-  if ((statSync(DYNAMIC_CONFIG).mode & 0o777) !== 0o600) {
-    chmodSync(DYNAMIC_CONFIG, 0o600);
+function ensureProfilesDir() {
+  if (!existsSync(DYNAMIC_PROFILES_DIR)) {
+    mkdirSync(DYNAMIC_PROFILES_DIR, { mode: 0o700 });
   }
-} catch {}
+}
+
+function readIndex() {
+  if (!existsSync(PROFILES_INDEX)) return { profileNames: [], defaults: {}, ipGroups: {} };
+  try { return JSON.parse(readFileSync(PROFILES_INDEX, "utf8")); } catch { return { profileNames: [], defaults: {}, ipGroups: {} }; }
+}
+
+function writeIndex(index) {
+  ensureProfilesDir();
+  writeFileSync(PROFILES_INDEX, JSON.stringify(index, null, 2) + "\n");
+  chmodSync(PROFILES_INDEX, 0o600);
+}
+
+function readProfileFile(name) {
+  assertSafeProfileName(name);
+  const p = join(DYNAMIC_PROFILES_DIR, `${name}.json`);
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
+}
+
+function writeProfileFile(name, data) {
+  assertSafeProfileName(name);
+  ensureProfilesDir();
+  const p = join(DYNAMIC_PROFILES_DIR, `${name}.json`);
+  writeFileSync(p, JSON.stringify(data, null, 2) + "\n");
+  chmodSync(p, 0o600);
+}
+
+function deleteProfileFile(name) {
+  assertSafeProfileName(name);
+  try { unlinkSync(join(DYNAMIC_PROFILES_DIR, `${name}.json`)); } catch {}
+}
+
+function invalidateCache() {
+  _configCache = null;
+  _configCacheTime = 0;
+}
+
+function assertSafeProfileName(name) {
+  if (!name || typeof name !== "string" || name.length === 0 || name.length > 64) {
+    throw new Error(`Profile name must be a non-empty string of 1-64 characters.`);
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid profile name "${name}". Use only letters, digits, hyphens, and underscores.`);
+  }
+}
+
+function writeProfileEntry(name, data) {
+  writeProfileFile(name, data);
+  const index = readIndex();
+  if (!index.profileNames.includes(name)) {
+    index.profileNames.push(name);
+    writeIndex(index);
+  }
+  invalidateCache();
+}
+
+function deleteProfileEntry(name) {
+  deleteProfileFile(name);
+  const index = readIndex();
+  index.profileNames = index.profileNames.filter((n) => n !== name);
+  writeIndex(index);
+  invalidateCache();
+}
+
+function updateProfileEntry(name, updateFn) {
+  const data = readProfileFile(name);
+  if (!data) return;
+  const updated = updateFn(data);
+  if (updated) writeProfileFile(name, updated);
+  invalidateCache();
+}
+
+function updateIndex(updateFn) {
+  const index = readIndex();
+  updateFn(index);
+  writeIndex(index);
+  invalidateCache();
+}
+
+function readDynamic() {
+  migrateLegacyIfNeeded();
+  const index = readIndex();
+  const profiles = {};
+  for (const name of (index.profileNames || [])) {
+    const data = readProfileFile(name);
+    if (data) profiles[name] = data;
+  }
+  return { profiles, defaults: index.defaults || {}, ipGroups: index.ipGroups || {} };
+}
+
+let _migrated = false;
+function migrateLegacyIfNeeded() {
+  if (_migrated) return;
+  _migrated = true;
+  if (!existsSync(DYNAMIC_CONFIG) || existsSync(PROFILES_INDEX)) return;
+  try {
+    const old = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
+    ensureProfilesDir();
+    const profileNames = Object.keys(old.profiles || {}).filter((n) => {
+      try { assertSafeProfileName(n); return true; } catch { return false; }
+    });
+    for (const [name, data] of Object.entries(old.profiles || {})) {
+      try {
+        assertSafeProfileName(name);
+        writeProfileFile(name, data);
+      } catch { /* skip profiles with invalid names during migration */ }
+    }
+    writeIndex({ profileNames, defaults: old.defaults || {}, ipGroups: old.ipGroups || {} });
+    renameSync(DYNAMIC_CONFIG, DYNAMIC_CONFIG + ".bak");
+  } catch {}
+}
 const ENC_ALGO = "aes-256-gcm";
+
+function getKeyId(key) {
+  return createHash("sha256").update(key).digest().slice(0, 4).toString("hex");
+}
 
 function getOrCreateEncryptionKey() {
   if (existsSync(ENCRYPTION_KEY_FILE)) {
     return Buffer.from(readFileSync(ENCRYPTION_KEY_FILE, "utf8").trim(), "hex");
   }
   const key = randomBytes(32);
-  writeFileSync(ENCRYPTION_KEY_FILE, key.toString("hex") + "\n", { mode: 0o600 });
-  try { chmodSync(ENCRYPTION_KEY_FILE, 0o600); } catch {}
+  const hexKey = key.toString("hex") + "\n";
+  try {
+    const fd = openSync(ENCRYPTION_KEY_FILE, "wx", 0o600);
+    try { writeSync(fd, hexKey); } finally { closeSync(fd); }
+  } catch (e) {
+    if (e.code === "EEXIST") {
+      return Buffer.from(readFileSync(ENCRYPTION_KEY_FILE, "utf8").trim(), "hex");
+    }
+    throw e;
+  }
   return key;
 }
 
@@ -49,14 +174,25 @@ export function encryptPassword(password) {
   const cipher = createCipheriv(ENC_ALGO, key, iv);
   const enc = Buffer.concat([cipher.update(password, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${enc.toString("hex")}:${tag.toString("hex")}`;
+  return `v1:${getKeyId(key)}:${iv.toString("hex")}:${enc.toString("hex")}:${tag.toString("hex")}`;
 }
 
 export function decryptPassword(encrypted) {
   const key = getOrCreateEncryptionKey();
   const parts = encrypted.split(":");
-  if (parts.length !== 3) throw new Error("Invalid encrypted password format.");
-  const [ivHex, encHex, tagHex] = parts;
+  let ivHex, encHex, tagHex;
+  if (parts.length === 3) {
+    // Legacy format: iv:ct:tag
+    [ivHex, encHex, tagHex] = parts;
+  } else if (parts.length === 5 && parts[0] === "v1") {
+    const expectedKeyId = getKeyId(key);
+    if (parts[1] !== expectedKeyId) {
+      throw new Error("Decryption failed: encryption key mismatch. The key may have changed.");
+    }
+    [, , ivHex, encHex, tagHex] = parts;
+  } else {
+    throw new Error("Invalid encrypted password format.");
+  }
   const decipher = createDecipheriv(ENC_ALGO, key, Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   return decipher.update(Buffer.from(encHex, "hex"), undefined, "utf8") + decipher.final("utf8");
@@ -75,21 +211,18 @@ function isAuthFailure(stderr) {
 }
 
 function markProfileAuthFailed(profileName) {
-  if (!profileName || !existsSync(DYNAMIC_CONFIG)) return;
-  let dynamic = {};
-  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch { return; }
-  if (!dynamic.profiles?.[profileName]) return;
-  dynamic.profiles[profileName]._authFailed = true;
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
-  _configCache = null;
-  _configCacheTime = 0;
+  if (!profileName) return;
+  updateProfileEntry(profileName, (data) => {
+    data._authFailed = true;
+    return data;
+  });
 }
 
-function clearProfileAuthFailed(dynamic, profileName) {
-  if (dynamic.profiles?.[profileName]) {
-    delete dynamic.profiles[profileName]._authFailed;
-  }
+function clearProfileAuthFailed(name) {
+  updateProfileEntry(name, (data) => {
+    delete data._authFailed;
+    return data;
+  });
 }
 
 export function listLocalSshKeys() {
@@ -132,8 +265,7 @@ export function loadConfig() {
   }
   const configPaths = [
     ...preferredExistingConfigPaths(PLUGIN_ROOT, ROOT_CONFIG_FILES),
-    ...preferredExistingConfigPaths(join(os.homedir(), ".ssh"), HOME_CONFIG_FILES),
-    DYNAMIC_CONFIG
+    ...preferredExistingConfigPaths(join(os.homedir(), ".ssh"), HOME_CONFIG_FILES)
   ];
   if (process.env.SSH_OPS_CONFIG) {
     for (const rawPath of process.env.SSH_OPS_CONFIG.split(delimiter)) {
@@ -170,6 +302,12 @@ export function loadConfig() {
       }
     });
   }
+
+  // Merge dynamic profiles (per-file storage wins over static config)
+  const dynamic = readDynamic();
+  Object.assign(config.defaults, dynamic.defaults);
+  Object.assign(config.profiles, dynamic.profiles);
+  if (existsSync(PROFILES_INDEX)) loadedFrom.push(PROFILES_INDEX);
 
   const result = { ...config, loadedFrom, defaults: config.defaults || {}, profiles: config.profiles || {} };
   _configCache = result;
@@ -208,6 +346,9 @@ export function parseYamlConfig(source) {
     }
 
     const key = match[1].trim();
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new Error(`YAML line ${index + 1}: reserved key "${key}" is not allowed.`);
+    }
     const rawValue = match[2].trim();
     while (indent <= stack[stack.length - 1].indent) {
       stack.pop();
@@ -268,32 +409,31 @@ export function listProfiles() {
     defaultTarget: config.defaultTarget || null,
     loadedFrom: config.loadedFrom,
     profiles: Object.fromEntries(
-      Object.entries(config.profiles).map(([name, profile]) => [
-        name,
-        {
-          host: profile.host || null,
-          user: profile.user || null,
-          port: profile.port || 22,
-          hasIdentityFile: Boolean(profile.identityFile),
-          extraArgs: Array.isArray(profile.extraArgs) ? profile.extraArgs : []
-        }
-      ])
+      Object.entries(config.profiles)
+        .filter(([, profile]) => !profile.hidden)
+        .map(([name, profile]) => [
+          name,
+          {
+            host: profile.host || null,
+            user: profile.user || null,
+            port: profile.port || 22,
+            hasIdentityFile: Boolean(profile.identityFile),
+            extraArgs: Array.isArray(profile.extraArgs) ? profile.extraArgs : []
+          }
+        ])
     )
   };
+}
+
+export function getConfig() {
+  return loadConfig();
 }
 
 export function addProfile(name, profile) {
   if (!name || typeof name !== "string") throw new Error("name is required.");
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error(`Invalid profile name "${name}". Use only letters, digits, hyphens, and underscores.`);
   if (!profile.host || typeof profile.host !== "string") throw new Error("host is required.");
-  let dynamic = { profiles: {} };
-  try {
-    if (existsSync(DYNAMIC_CONFIG)) {
-      dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
-    }
-  } catch {}
-  dynamic.profiles = dynamic.profiles || {};
-  const existing = dynamic.profiles[name] || {};
+  const existing = readProfileFile(name) || {};
   const entry = {
     _type: "profile",
     _addedAt: existing._addedAt || new Date().toISOString(),
@@ -312,29 +452,16 @@ export function addProfile(name, profile) {
     entry.encryptedPassword = encryptPassword(String(profile.password));
     entry.batchMode = false;
   }
-  dynamic.profiles[name] = entry;
-  clearProfileAuthFailed(dynamic, name);
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
-  _configCache = null;
-  _configCacheTime = 0;
+  writeProfileEntry(name, entry);
+  clearProfileAuthFailed(name);
   return listProfiles();
 }
 
 export function removeProfile(name) {
-  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`Profile "${name}" not found in dynamic config.`);
-  let dynamic = { profiles: {} };
-  try {
-    dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
-  } catch { throw new Error(`Profile "${name}" not found in dynamic config.`); }
-  if (!dynamic.profiles || !dynamic.profiles[name]) {
+  if (!readProfileFile(name)) {
     throw new Error(`Profile "${name}" not found in dynamic config. Only MCP-added profiles can be removed.`);
   }
-  delete dynamic.profiles[name];
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
-  _configCache = null;
-  _configCacheTime = 0;
+  deleteProfileEntry(name);
   return listProfiles();
 }
 
@@ -363,17 +490,11 @@ export function addJumpServer(name, server, { appendToChain = true, commonUser }
   if (!name || !/^[a-zA-Z0-9_-]+$/.test(name))
     throw new Error(`Invalid jump server name "${name}". Use only letters, digits, hyphens, underscores.`);
   if (!server.host) throw new Error("host is required.");
-  let dynamic = { profiles: {}, defaults: {} };
-  try {
-    if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8"));
-  } catch {}
-  dynamic.profiles = dynamic.profiles || {};
-  dynamic.defaults = dynamic.defaults || {};
-  const existingJs = dynamic.profiles[name] || {};
+  const existing = readProfileFile(name) || {};
   const entry = {
     _type: "jump",
     _isJumpServer: true,
-    _addedAt: existingJs._addedAt || new Date().toISOString(),
+    _addedAt: existing._addedAt || new Date().toISOString(),
     _updatedAt: new Date().toISOString(),
     host: server.host,
     ...(server.user && { user: server.user }),
@@ -384,41 +505,32 @@ export function addJumpServer(name, server, { appendToChain = true, commonUser }
     entry.encryptedPassword = encryptPassword(String(server.password));
     entry.batchMode = false;
   }
-  dynamic.profiles[name] = entry;
-  clearProfileAuthFailed(dynamic, name);
-  if (appendToChain) {
-    const chain = Array.isArray(dynamic.defaults.jumpChain) ? dynamic.defaults.jumpChain : [];
-    if (!chain.includes(name)) chain.push(name);
-    dynamic.defaults.jumpChain = chain;
-  }
-  if (commonUser) {
-    dynamic.defaults.commonUser = commonUser;
-  }
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
-  _configCache = null;
-  _configCacheTime = 0;
+  writeProfileEntry(name, entry);
+  clearProfileAuthFailed(name);
+  updateIndex((index) => {
+    index.defaults = index.defaults || {};
+    if (appendToChain) {
+      const chain = Array.isArray(index.defaults.jumpChain) ? index.defaults.jumpChain : [];
+      if (!chain.includes(name)) chain.push(name);
+      index.defaults.jumpChain = chain;
+    }
+    if (commonUser) index.defaults.commonUser = commonUser;
+  });
   return listJumpServers();
 }
 
 export function removeJumpServer(name) {
-  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`Jump server "${name}" not found in dynamic config.`);
-  let dynamic = { profiles: {}, defaults: {} };
-  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {
-    throw new Error(`Jump server "${name}" not found in dynamic config.`);
-  }
-  if (!dynamic.profiles?.[name]?._isJumpServer) {
+  const data = readProfileFile(name);
+  if (!data?._isJumpServer) {
     throw new Error(`Jump server "${name}" not found. Only MCP-added jump servers can be removed.`);
   }
-  delete dynamic.profiles[name];
-  if (Array.isArray(dynamic.defaults?.jumpChain)) {
-    dynamic.defaults.jumpChain = dynamic.defaults.jumpChain.filter((n) => n !== name);
-    if (dynamic.defaults.jumpChain.length === 0) delete dynamic.defaults.jumpChain;
-  }
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
-  _configCache = null;
-  _configCacheTime = 0;
+  deleteProfileEntry(name);
+  updateIndex((index) => {
+    if (Array.isArray(index.defaults?.jumpChain)) {
+      index.defaults.jumpChain = index.defaults.jumpChain.filter((n) => n !== name);
+      if (index.defaults.jumpChain.length === 0) delete index.defaults.jumpChain;
+    }
+  });
   return listJumpServers();
 }
 
@@ -430,38 +542,32 @@ export function saveIpGroup(name, { iface, ips, gateway, dns } = {}) {
     if (!/^[\d.a-fA-F:]+\/\d{1,3}$/.test(ip))
       throw new Error(`Invalid CIDR: "${ip}". Use format like 192.168.1.100/24`);
   }
-  let dynamic = { profiles: {}, defaults: {}, ipGroups: {} };
-  try { if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
-  dynamic.ipGroups = dynamic.ipGroups || {};
-  dynamic.ipGroups[name] = {
-    _addedAt: dynamic.ipGroups[name]?._addedAt || new Date().toISOString(),
-    _updatedAt: new Date().toISOString(),
-    ...(iface && { iface }),
-    ips,
-    ...(gateway && { gateway }),
-    ...(Array.isArray(dns) && dns.length && { dns })
-  };
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
+  updateIndex((index) => {
+    index.ipGroups = index.ipGroups || {};
+    index.ipGroups[name] = {
+      _addedAt: index.ipGroups[name]?._addedAt || new Date().toISOString(),
+      _updatedAt: new Date().toISOString(),
+      ...(iface && { iface }),
+      ips,
+      ...(gateway && { gateway }),
+      ...(Array.isArray(dns) && dns.length && { dns })
+    };
+  });
   return listIpGroups();
 }
 
 export function removeIpGroup(name) {
-  if (!existsSync(DYNAMIC_CONFIG)) throw new Error(`IP group "${name}" not found.`);
-  let dynamic = {};
-  try { dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
-  if (!dynamic.ipGroups?.[name]) throw new Error(`IP group "${name}" not found in dynamic config.`);
-  delete dynamic.ipGroups[name];
-  if (Object.keys(dynamic.ipGroups).length === 0) delete dynamic.ipGroups;
-  writeFileSync(DYNAMIC_CONFIG, JSON.stringify(dynamic, null, 2) + "\n");
-  chmodSync(DYNAMIC_CONFIG, 0o600);
+  const index = readIndex();
+  if (!index.ipGroups?.[name]) throw new Error(`IP group "${name}" not found in dynamic config.`);
+  updateIndex((idx) => {
+    delete idx.ipGroups[name];
+    if (idx.ipGroups && Object.keys(idx.ipGroups).length === 0) delete idx.ipGroups;
+  });
   return listIpGroups();
 }
 
 export function listIpGroups() {
-  let dynamic = {};
-  try { if (existsSync(DYNAMIC_CONFIG)) dynamic = JSON.parse(readFileSync(DYNAMIC_CONFIG, "utf8")); } catch {}
-  return dynamic.ipGroups || {};
+  return readIndex().ipGroups || {};
 }
 
 export function resolveIpGroup(name) {
@@ -883,11 +989,14 @@ export function fileReadScript(path, maxBytes = 51200, encoding = "text") {
   return `set +e\nhead -c ${safeMax} ${shellQuote(String(path))}\n`;
 }
 
-export function fileWriteScript(path, content, { backup = true, sudo = false, encoding = "text" } = {}) {
+export function fileWriteScript(path, content, { backup = true, sudo = false, encoding = "text", followSymlinks = false } = {}) {
   const parts = [
     "set +e",
     `_f=${shellQuote(String(path))}`
   ];
+  if (!followSymlinks) {
+    parts.push(`if [ -L "$_f" ]; then echo "ERROR: target is a symlink. Refusing write to prevent symlink attack. Pass followSymlinks:true to override." >&2; exit 1; fi`);
+  }
   if (backup) {
     parts.push(`cp "$_f" "$_f.bak.$(date +%s)" 2>/dev/null || true`);
   }
@@ -921,8 +1030,15 @@ export function filePatchScript(path, {
   if (startLine === undefined && pattern === undefined) {
     throw new Error("Provide startLine or pattern.");
   }
-  if (startLine !== undefined && startLine < 1) {
-    throw new Error("startLine must be >= 1.");
+  if (startLine !== undefined) {
+    if (!Number.isInteger(startLine) || startLine < 1) {
+      throw new Error("startLine must be a positive integer.");
+    }
+  }
+  if (endLine !== undefined) {
+    if (!Number.isInteger(endLine) || endLine < 1) {
+      throw new Error("endLine must be a positive integer.");
+    }
   }
   const resolvedEnd = endLine !== undefined ? endLine : startLine;
   if (startLine !== undefined && resolvedEnd < startLine) {
@@ -1188,7 +1304,10 @@ export function cronScript({ action, user, schedule, command: cronCommand } = {}
   if (action === "add") {
     if (!schedule) throw new Error("schedule is required for add.");
     if (!cronCommand) throw new Error("command is required for add.");
-    if (!/^(\S+\s+){4}\S+$/.test(schedule.trim())) {
+    if (/[\r\n\x00]/.test(schedule) || /[\r\n\x00]/.test(cronCommand)) {
+      throw new Error("schedule and command must not contain newlines or null bytes.");
+    }
+    if (!/^(\S+[ \t]+){4}\S+$/.test(schedule.trim())) {
       throw new Error("schedule must have 5 space-separated fields (e.g. '0 * * * *').");
     }
   }
@@ -1528,11 +1647,12 @@ useradd \
   ${shellQ ? `--shell ${shellQ}` : ""} \
   ${homeQ ? `--home-dir ${homeQ}` : ""} \
   ${commentQ ? `--comment ${commentQ}` : ""} \
+  -- \
   ${uQ}
 _exit=$?
 if [ $_exit -ne 0 ]; then echo "useradd failed (exit $_exit)"; exit $_exit; fi
 ${pwQ ? `echo ${uQ}:${pwQ} | chpasswd && echo "Password set"` : "echo 'No password set — account locked until password assigned'"}
-${groupsQ ? `usermod -aG ${groupsQ} ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
+${groupsQ ? `usermod -aG ${groupsQ} -- ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
 echo "Created user:"
 id ${uQ}
 `;
@@ -1546,7 +1666,7 @@ if ! id ${uQ} >/dev/null 2>&1; then
   exit 1
 fi
 echo "Deleting user: ${uQ}"
-userdel ${removeHome ? "-r" : ""} ${uQ}
+userdel ${removeHome ? "-r" : ""} -- ${uQ}
 _exit=$?
 [ $_exit -eq 0 ] && echo "User ${uQ} deleted${removeHome ? " (home removed)" : ""}" \
   || echo "userdel failed (exit $_exit)"
@@ -1560,9 +1680,9 @@ _exit=$?
     return `set +e
 export LC_ALL=C
 if ! id ${uQ} >/dev/null 2>&1; then echo "User ${uQ} not found"; exit 1; fi
-${shellQ ? `usermod --shell ${shellQ} ${uQ} && echo "Shell changed to ${shellQ}"` : ""}
-${groupsQ ? `usermod -aG ${groupsQ} ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
-${commentQ ? `usermod --comment ${commentQ} ${uQ} && echo "Comment updated"` : ""}
+${shellQ ? `usermod --shell ${shellQ} -- ${uQ} && echo "Shell changed to ${shellQ}"` : ""}
+${groupsQ ? `usermod -aG ${groupsQ} -- ${uQ} && echo "Added to groups: ${groupsQ}"` : ""}
+${commentQ ? `usermod --comment ${commentQ} -- ${uQ} && echo "Comment updated"` : ""}
 echo "Updated user:"
 id ${uQ}
 `;
@@ -1635,14 +1755,20 @@ done
   }
 
   if (action === "add") {
-    const cmdQ = shellQuote(commands);
-    const runasQ = shellQuote(runas);
+    // Validate runas and commands don't contain shell metacharacters
+    if (/[\r\n\x00$`\\"]/.test(runas)) throw new Error("runas contains invalid characters.");
+    if (typeof commands === "string" && /[\r\n\x00$`\\"]/.test(commands)) {
+      throw new Error("commands contains invalid characters.");
+    }
+    const commandsStr = Array.isArray(commands) ? commands.join(", ") : commands;
     const nopasswdStr = nopasswd ? "NOPASSWD: " : "";
+    const ruleContent = `${username} ALL=(${runas}) ${nopasswdStr}${commandsStr}`;
+    const ruleDelim = uniqueHeredocDelimiter(ruleContent, "SSH_OPS_SUDO");
     return `set +e
 export LC_ALL=C
-RULE="${uQ} ALL=(${runas}) ${nopasswdStr}${commands}"
-echo "Adding sudoers rule: $RULE"
-echo "$RULE" > ${fileQ}
+cat > ${fileQ} <<'${ruleDelim}'
+${ruleContent}
+${ruleDelim}
 chmod 0440 ${fileQ}
 # Validate with visudo -c before accepting
 if visudo -c -f ${fileQ} 2>&1; then

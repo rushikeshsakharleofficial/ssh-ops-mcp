@@ -561,8 +561,6 @@ test("encryptPassword produces different ciphertext each call", async () => {
 });
 
 test("addProfile adds profile to dynamic config and listProfiles returns it", async () => {
-  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
-  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
   const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-profile-${Date.now()}`;
   const { addProfile, removeProfile } = await import(moduleUrl);
   try {
@@ -570,12 +568,7 @@ test("addProfile adds profile to dynamic config and listProfiles returns it", as
     assert.ok(result.profiles["test-add-profile"], "profile should be present after addProfile");
     assert.equal(result.profiles["test-add-profile"].host, "10.0.0.1");
   } finally {
-    // clean up: remove test profile from dynamic config
-    if (existsSync(dynPath)) {
-      try { removeProfile("test-add-profile"); } catch {}
-      const after = JSON.parse(rfs(dynPath, "utf8"));
-      if (Object.keys(after.profiles || {}).length === 0) unlinkSync(dynPath);
-    }
+    try { removeProfile("test-add-profile"); } catch {}
   }
 });
 
@@ -607,8 +600,6 @@ test("removeProfile throws when profile not in dynamic config", async () => {
 });
 
 test("addJumpServer adds to profiles with _isJumpServer and appends to jumpChain", async () => {
-  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
-  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
   const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-jump-${Date.now()}`;
   const { addJumpServer, removeJumpServer } = await import(moduleUrl);
   try {
@@ -618,19 +609,11 @@ test("addJumpServer adds to profiles with _isJumpServer and appends to jumpChain
     assert.equal(result.jumpServers["test-jump-bastion"].host, "10.1.0.1");
     assert.equal(result.jumpServers["test-jump-bastion"].port, 2222);
   } finally {
-    if (existsSync(dynPath)) {
-      try { removeJumpServer("test-jump-bastion"); } catch {}
-      const after = JSON.parse(rfs(dynPath, "utf8"));
-      if (Object.keys(after.profiles || {}).length === 0 && !after.defaults?.jumpChain?.length) {
-        unlinkSync(dynPath);
-      }
-    }
+    try { removeJumpServer("test-jump-bastion"); } catch {}
   }
 });
 
 test("addJumpServer sets commonUser in dynamic defaults", async () => {
-  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
-  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
   const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=add-jump-cu-${Date.now()}`;
   const { addJumpServer, removeJumpServer } = await import(moduleUrl);
   try {
@@ -641,11 +624,7 @@ test("addJumpServer sets commonUser in dynamic defaults", async () => {
     );
     assert.equal(result.commonUser, "ubuntu", "commonUser should be set");
   } finally {
-    if (existsSync(dynPath)) {
-      try { removeJumpServer("test-jump-cu"); } catch {}
-      const after = JSON.parse(rfs(dynPath, "utf8"));
-      if (Object.keys(after.profiles || {}).length === 0) unlinkSync(dynPath);
-    }
+    try { removeJumpServer("test-jump-cu"); } catch {}
   }
 });
 
@@ -760,8 +739,6 @@ test("ipAssignScript includes gateway and DNS when provided", async () => {
 });
 
 test("saveIpGroup and listIpGroups round-trip", async () => {
-  const { existsSync, unlinkSync, readFileSync: rfs } = await import("node:fs");
-  const dynPath = join(REPO_ROOT, "ssh-ops.dynamic.json");
   const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=ip-group-${Date.now()}`;
   const { saveIpGroup, removeIpGroup, listIpGroups } = await import(moduleUrl);
   try {
@@ -775,11 +752,7 @@ test("saveIpGroup and listIpGroups round-trip", async () => {
     assert.equal(groups["test-web-cluster"].iface, "eth0");
     assert.equal(groups["test-web-cluster"].gateway, "10.0.0.1");
   } finally {
-    if (existsSync(dynPath)) {
-      try { removeIpGroup("test-web-cluster"); } catch {}
-      const after = JSON.parse(rfs(dynPath, "utf8"));
-      if (Object.keys(after.profiles || {}).length === 0 && !after.ipGroups) unlinkSync(dynPath);
-    }
+    try { removeIpGroup("test-web-cluster"); } catch {}
   }
 });
 

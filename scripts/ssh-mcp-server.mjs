@@ -23,6 +23,7 @@ import {
   healthReportScript,
   listJumpServers,
   listProfiles,
+  getConfig,
   logSearchScript,
   networkCheckScript,
   packageScript,
@@ -35,7 +36,7 @@ import {
 } from "./ssh-core.mjs";
 import https from "node:https";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as pathResolve, sep as pathSep } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_VERSION = (() => {
@@ -53,11 +54,16 @@ const UPDATE_FILES = [
   "scripts/ssh-cli-options.mjs"
 ];
 
+const ALLOWED_FETCH_HOSTS = new Set(["api.github.com", "raw.githubusercontent.com"]);
+
 function httpsGetText(url, hops = 5) {
   return new Promise((resolve) => {
     if (hops <= 0) return resolve(null);
+    let parsed;
+    try { parsed = new URL(url); } catch { return resolve(null); }
+    if (!ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return resolve(null);
     const headers = { "User-Agent": "ssh-ops-mcp" };
-    if (new URL(url).hostname === "api.github.com") {
+    if (parsed.hostname === "api.github.com") {
       headers["Accept"] = "application/vnd.github+json";
     }
     https.get(url, { headers }, (res) => {
@@ -96,16 +102,17 @@ async function selfUpdate() {
   } catch {}
 }
 
-const tools = [
-  {
-    name: "ssh_profiles",
-    title: "List SSH Ops Profiles",
-    description: "List configured SSH Ops profiles and the default target. Does not connect to any host.",
-    inputSchema: {
-      type: "object",
-      properties: {}
-    }
-  },
+const profilesTool = {
+  name: "ssh_profiles",
+  title: "List SSH Ops Profiles",
+  description: "List configured SSH Ops profiles and the default target. Does not connect to any host.",
+  inputSchema: {
+    type: "object",
+    properties: {}
+  }
+};
+
+const allTools = [
   {
     name: "ssh_run",
     title: "Run SSH Command",
@@ -667,6 +674,18 @@ const tools = [
   }
 ];
 
+function getTools() {
+  try {
+    const cfg = getConfig();
+    if (cfg.exposeProfiles === false) return allTools;
+  } catch {}
+  return [profilesTool, ...allTools];
+}
+
+function isTopologyExposed() {
+  try { return getConfig().exposeProfiles !== false; } catch { return true; }
+}
+
 let _skillInstructions = null;
 function getSkillInstructions() {
   if (_skillInstructions !== null) return _skillInstructions;
@@ -701,7 +720,7 @@ const handlers = {
   },
 
   "tools/list"() {
-    return { tools };
+    return { tools: getTools() };
   },
 
   async "tools/call"(message) {
@@ -715,26 +734,99 @@ const handlers = {
   }
 };
 
-function validateInput(toolName, params) {
-  if (toolName === "ssh_file_read" || toolName === "ssh_file_write" || toolName === "ssh_file_patch") {
-    if (params.path && !params.path.startsWith("/")) {
-      return `path must be absolute (start with /). Got: ${params.path}`;
+const BLOCKED_SSH_OPTIONS = new Set([
+  "ProxyCommand", "LocalCommand", "PermitLocalCommand", "ProxyJump",
+  "Include", "Match", "ForwardAgent", "ForwardX11", "ForwardX11Trusted",
+  "DynamicForward", "LocalForward", "RemoteForward", "Tunnel", "TunnelDevice"
+]);
+
+const BLOCKED_SSH_FLAGS = new Set(["-D", "-L", "-R", "-w", "-W", "-J"]);
+
+function validateSshOptions(opts) {
+  if (!Array.isArray(opts)) return null;
+  for (let i = 0; i < opts.length; i++) {
+    const opt = String(opts[i]);
+    if (BLOCKED_SSH_FLAGS.has(opt)) {
+      return `SSH flag "${opt}" is not permitted for security reasons.`;
+    }
+    if (opt === "-o") {
+      const val = String(opts[i + 1] || "");
+      const key = val.split("=")[0];
+      if (BLOCKED_SSH_OPTIONS.has(key)) {
+        return `SSH option "${key}" is not permitted for security reasons.`;
+      }
+      i++;
+    } else if (opt.startsWith("-o") && opt.length > 2) {
+      const val = opt.slice(2);
+      const key = val.split("=")[0];
+      if (BLOCKED_SSH_OPTIONS.has(key)) {
+        return `SSH option "${key}" is not permitted for security reasons.`;
+      }
     }
   }
+  return null;
+}
+
+function validateInput(toolName, params) {
+  // Global: reject control characters in all string params
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v === "string" && /[\r\n\x00]/.test(v)) {
+      return `Parameter "${k}" must not contain newlines or null bytes.`;
+    }
+  }
+
+  // sshOptions / extraArgs validation (applies to any tool that accepts them)
+  if (params.sshOptions !== undefined) {
+    const err = validateSshOptions(params.sshOptions);
+    if (err) return err;
+  }
+  if (params.extraArgs !== undefined) {
+    const err = validateSshOptions(params.extraArgs);
+    if (err) return err;
+  }
+
+  // Integer range checks for common numeric fields
+  const intRanges = { port: [1, 65535], timeoutMs: [1, 3600000], connectTimeoutSec: [1, 300], maxOutputBytes: [1, 100_000_000] };
+  for (const [field, [min, max]] of Object.entries(intRanges)) {
+    if (params[field] !== undefined && (!Number.isInteger(params[field]) || params[field] < min || params[field] > max)) {
+      return `${field} must be an integer between ${min} and ${max}. Got: ${params[field]}`;
+    }
+  }
+  // startLine / endLine
+  if (params.startLine !== undefined && (!Number.isInteger(params.startLine) || params.startLine < 1)) {
+    return `startLine must be a positive integer. Got: ${params.startLine}`;
+  }
+  if (params.endLine !== undefined && (!Number.isInteger(params.endLine) || params.endLine < 1)) {
+    return `endLine must be a positive integer. Got: ${params.endLine}`;
+  }
+
+  if (toolName === "ssh_file_read" || toolName === "ssh_file_write" || toolName === "ssh_file_patch") {
+    if (params.path) {
+      if (!params.path.startsWith("/")) {
+        return `path must be absolute (start with /). Got: ${params.path}`;
+      }
+      if (/(\/\.\.)|(\/\.$)/.test(params.path) || params.path.includes("\x00")) {
+        return `path must not contain ".." segments or null bytes. Got: ${params.path}`;
+      }
+    }
+  }
+
   if (toolName === "ssh_service") {
     const unit = params.unit || params.service;
     if (unit && !/^[a-zA-Z0-9@_:.+-]+$/.test(unit)) {
       return `service/unit contains invalid characters. Use only [a-zA-Z0-9@_:.+-]. Got: ${unit}`;
     }
   }
+
   if (toolName === "ssh_package") {
     const entries = Array.isArray(params.packages) ? params.packages : (params.package ? [params.package] : []);
     for (const pkg of entries) {
-      if (!/^[a-zA-Z0-9._+:-]+$/.test(pkg)) {
-        return `package name contains invalid characters. Use only [a-zA-Z0-9._+:-]. Got: ${pkg}`;
+      if (!/^[a-zA-Z0-9._+:-]+$/.test(pkg) || pkg.startsWith("-")) {
+        return `package name is invalid or starts with a dash. Use only [a-zA-Z0-9._+:-]. Got: ${pkg}`;
       }
     }
   }
+
   if (toolName === "ssh_chmod") {
     if (params.mode !== undefined && !/^[0-7]{3,4}$|^[ugoa]*[+\-=][rwxXst]+$/.test(params.mode)) {
       return `mode is invalid. Use octal (755, 0644) or symbolic (u+x, g-w). Got: ${params.mode}`;
@@ -746,28 +838,70 @@ function validateInput(toolName, params) {
       return `group contains invalid characters. Use only [a-zA-Z0-9._-]. Got: ${params.group}`;
     }
   }
+
   if (toolName === "ssh_sudo_rule") {
-    if (params.ruleFile !== undefined && !/^[a-zA-Z0-9._-]+$/.test(params.ruleFile)) {
-      return `ruleFile must be a plain filename with no path separators or "..". Got: ${params.ruleFile}`;
+    if (params.ruleFile !== undefined) {
+      if (!/^[a-zA-Z0-9._-]+$/.test(params.ruleFile) || /^\.+$/.test(params.ruleFile)) {
+        return `ruleFile must be a plain filename (no path separators, not all-dots). Got: ${params.ruleFile}`;
+      }
     }
     if (params.commands !== undefined) {
       const cmds = Array.isArray(params.commands) ? params.commands : [params.commands];
       for (const cmd of cmds) {
-        if (/[\r\n\x00]/.test(cmd)) {
-          return `commands must not contain newlines or null bytes.`;
+        if (/[\r\n\x00$`\\"]/.test(cmd)) {
+          return `commands must not contain newlines, null bytes, or shell metacharacters.`;
         }
       }
     }
+    if (params.runas !== undefined && /[\r\n\x00$`\\"]/.test(params.runas)) {
+      return `runas must not contain shell metacharacters.`;
+    }
+    if (params.username !== undefined && !/^[a-z_][a-z0-9_-]{0,30}$/.test(params.username)) {
+      return `username must match ^[a-z_][a-z0-9_-]{0,30}$ (POSIX). Got: ${params.username}`;
+    }
   }
+
+  if (toolName === "ssh_user") {
+    if (params.username !== undefined && params.action !== "list" && !/^[a-z_][a-z0-9_-]{0,30}$/.test(params.username)) {
+      return `username must match ^[a-z_][a-z0-9_-]{0,30}$ (POSIX). Got: ${params.username}`;
+    }
+    if (params.shell !== undefined && /[\r\n\x00 ]/.test(params.shell)) {
+      return `shell must not contain spaces, newlines, or null bytes.`;
+    }
+    if (params.homeDir !== undefined && (!params.homeDir.startsWith("/") || params.homeDir.includes("..") || /[\r\n\x00]/.test(params.homeDir))) {
+      return `homeDir must be an absolute path without ".." segments.`;
+    }
+  }
+
+  if (toolName === "ssh_cron") {
+    if (params.schedule !== undefined && /[\r\n\x00]/.test(params.schedule)) {
+      return `schedule must not contain newlines or null bytes.`;
+    }
+    if (params.command !== undefined && /[\r\n\x00]/.test(params.command)) {
+      return `command must not contain newlines or null bytes.`;
+    }
+  }
+
   return null;
 }
 
 async function callTool(name, args) {
+  // Enforce tool visibility: reject tools hidden from tools/list
+  const visibleToolNames = new Set(getTools().map(t => t.name));
+  if (!visibleToolNames.has(name)) {
+    return textResult(`Unknown tool: ${name}`, true);
+  }
+
   if (name === "ssh_profiles") {
     return textResult(JSON.stringify(listProfiles(), null, 2));
   }
 
   if (name === "ssh_run") {
+    if (args.sudo === true && args.confirm !== true) {
+      return textResult(`ssh_run with sudo:true requires confirm:true. Set confirm:true to execute with elevated privileges.`, true);
+    }
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
     const result = await runSshCommand({ retries: args.retries ?? 0, retryDelayMs: args.retryDelayMs ?? 1500, ...args });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
@@ -854,6 +988,11 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_run_multi") {
+    if (args.sudo === true && args.confirm !== true) {
+      return textResult(`ssh_run_multi with sudo:true requires confirm:true. Set confirm:true to execute with elevated privileges.`, true);
+    }
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
     const maxConcurrent = args.maxConcurrent || 10;
     const retries = args.retries ?? 2;
     const retryDelayMs = args.retryDelayMs ?? 1500;
@@ -932,6 +1071,11 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_add_profile") {
+    if (args.confirm !== true) {
+      return textResult(`ssh_add_profile requires confirm:true. Adding profiles changes persistent SSH configuration.`, true);
+    }
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
     const profiles = addProfile(args.name, {
       host: args.host,
       user: args.user,
@@ -949,11 +1093,19 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_remove_profile") {
+    if (args.confirm !== true) {
+      return textResult(`ssh_remove_profile requires confirm:true.`, true);
+    }
     const profiles = removeProfile(args.name);
     return textResult(JSON.stringify(profiles, null, 2));
   }
 
   if (name === "ssh_add_jump") {
+    if (args.confirm !== true) {
+      return textResult(`ssh_add_jump requires confirm:true. Adding jump servers modifies the SSH routing chain.`, true);
+    }
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
     const result = addJumpServer(
       args.name,
       {
@@ -972,15 +1124,20 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_remove_jump") {
+    if (args.confirm !== true) {
+      return textResult(`ssh_remove_jump requires confirm:true.`, true);
+    }
     const result = removeJumpServer(args.name);
     return textResult(JSON.stringify(result, null, 2));
   }
 
   if (name === "ssh_list_jumps") {
+    if (!isTopologyExposed()) return textResult(`Tool not available.`, true);
     return textResult(JSON.stringify(listJumpServers(), null, 2));
   }
 
   if (name === "ssh_list_keys") {
+    if (!isTopologyExposed()) return textResult(`Tool not available.`, true);
     const keys = listLocalSshKeys();
     const out = keys.length > 0
       ? `Found ${keys.length} SSH private key(s):\n${keys.map((k) => `  ${k}`).join("\n")}`
@@ -998,17 +1155,22 @@ async function callTool(name, args) {
       const g = resolveIpGroup(args.group);
       resolved = { iface: g.iface, ips: g.ips, gateway: g.gateway, dns: g.dns, ...resolved };
     } else if (args.fromFile) {
+      const resolvedFromFile = pathResolve(args.fromFile);
+      const allowedBase = PLUGIN_ROOT;
+      if (!resolvedFromFile.startsWith(allowedBase + "/") && !resolvedFromFile.startsWith(allowedBase + pathSep)) {
+        return textResult(`fromFile must be within the ssh-ops plugin directory (${allowedBase}).`, true);
+      }
       let raw;
-      try { raw = readFileSync(args.fromFile, "utf8"); } catch (e) {
-        return textResult(`Cannot read file: ${args.fromFile} — ${e.message}`, true);
+      try { raw = readFileSync(resolvedFromFile, "utf8"); } catch {
+        return textResult(`Cannot read the specified fromFile.`, true);
       }
       let parsed;
       try {
-        parsed = args.fromFile.match(/\.ya?ml$/i)
+        parsed = resolvedFromFile.match(/\.ya?ml$/i)
           ? parseYamlConfig(raw)
           : JSON.parse(raw);
-      } catch (e) {
-        return textResult(`Failed to parse ${args.fromFile}: ${e.message}`, true);
+      } catch {
+        return textResult(`Failed to parse fromFile: invalid JSON or YAML format.`, true);
       }
       resolved = { ...parsed, ...resolved };
     }
@@ -1036,6 +1198,7 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_save_ip_group") {
+    if (!isTopologyExposed()) return textResult(`Tool not available.`, true);
     const groups = saveIpGroup(args.name, {
       iface: args.iface,
       ips: args.ips,
@@ -1046,11 +1209,13 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_remove_ip_group") {
+    if (!isTopologyExposed()) return textResult(`Tool not available.`, true);
     const groups = removeIpGroup(args.name);
     return textResult(JSON.stringify(groups, null, 2));
   }
 
   if (name === "ssh_list_ip_groups") {
+    if (!isTopologyExposed()) return textResult(`Tool not available.`, true);
     return textResult(JSON.stringify(listIpGroups(), null, 2));
   }
 
@@ -1109,12 +1274,22 @@ async function callTool(name, args) {
     if (mutatingActions[args.action] && args.confirm !== true) {
       return textResult(`Mutating operation requires confirm:true. Set confirm:true to execute ssh_sudo_rule.`, true);
     }
+    if (args.action === "add") {
+      const cmds = args.commands;
+      if (!cmds) {
+        return textResult(`commands is required for ssh_sudo_rule add. Specify an array of allowed commands.`, true);
+      }
+      const cmdList = Array.isArray(cmds) ? cmds : [cmds];
+      if (cmdList.includes("ALL") && args.iAcceptRiskOfAllCommands !== true) {
+        return textResult(`commands:"ALL" grants unrestricted sudo. Set iAcceptRiskOfAllCommands:true to confirm this risk.`, true);
+      }
+    }
     const command = sudoRuleScript({
       action: args.action,
       username: args.username,
-      commands: args.commands || "ALL",
+      commands: args.commands,
       runas: args.runas || "ALL:ALL",
-      nopasswd: args.nopasswd !== false,
+      nopasswd: args.nopasswd === true,
       ruleFile: args.ruleFile
     });
     const result = await runSshCommand({
