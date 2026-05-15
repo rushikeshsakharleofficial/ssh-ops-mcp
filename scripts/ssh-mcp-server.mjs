@@ -886,6 +886,8 @@ function getSkillInstructions() {
 
 const handlers = {
   initialize(message) {
+    initLogger();
+    serverLog("info", "ssh-ops MCP server initialized", { version: SERVER_VERSION });
     if (process.env.SSH_OPS_AUTO_UPDATE === "1") {
       void selfUpdate();
     }
@@ -921,11 +923,21 @@ const handlers = {
       if (rateLimitErr) {
         const result = textResult(rateLimitErr, true);
         writeAuditLog(name, args, result);
+        serverLog("warn", "rate limit exceeded", { tool: name, target });
         return result;
       }
     } catch {}
-    const result = await callTool(name, args);
-    writeAuditLog(name, args, result);
+    const _start = Date.now();
+    let result;
+    try {
+      result = await callTool(name, args);
+    } catch (err) {
+      serverLog("error", "callTool threw", { tool: name, error: err?.message });
+      result = textResult(`Internal error: ${err?.message}`, true);
+    }
+    const durationMs = Date.now() - _start;
+    writeAuditLog(name, args, result, { durationMs });
+    if (result?.isError) serverLog("warn", "tool returned error", { tool: name, durationMs });
     return result;
   },
 
@@ -1857,18 +1869,104 @@ printf '{"cpuPercent":%s,"memPercent":%s,"memUsedMB":%s,"memTotalMB":%s,"loadAvg
 }
 
 const AUDIT_LOG = join(PLUGIN_ROOT, "ssh-ops-audit.log");
-function writeAuditLog(name, args, result) {
+const SERVER_LOG = join(PLUGIN_ROOT, "ssh-ops-server.log");
+
+// ── Server logger ─────────────────────────────────────────────────────────────
+const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
+let _logLevel = 1; // info
+let _logShipQueue = [];
+let _logShipTimer = null;
+
+function initLogger() {
+  try {
+    const cfg = getConfig();
+    _logLevel = LOG_LEVELS[String(cfg.logLevel || "info").toLowerCase()] ?? 1;
+  } catch {}
+}
+
+function serverLog(level, message, meta = {}) {
+  try {
+    const numLevel = LOG_LEVELS[level] ?? 1;
+    if (numLevel < _logLevel) return;
+    const entry = {
+      ts: new Date().toISOString(),
+      level: level.toUpperCase(),
+      msg: message,
+      ...(Object.keys(meta).length > 0 && { meta })
+    };
+    appendFileSync(SERVER_LOG, JSON.stringify(entry) + "\n");
+    _queueForShipping(entry);
+  } catch {}
+}
+
+// ── Richer audit log ──────────────────────────────────────────────────────────
+function writeAuditLog(name, args, result, extra = {}) {
   try {
     const safeArgs = { ...args };
     if (safeArgs.password) safeArgs.password = "[REDACTED]";
     if (safeArgs.content && String(safeArgs.content).length > 200) safeArgs.content = "[TRUNCATED]";
-    const entry = JSON.stringify({
+    const entry = {
       ts: new Date().toISOString(),
       tool: name,
-      args: safeArgs,
-      isError: result?.isError ?? false
-    }) + "\n";
-    appendFileSync(AUDIT_LOG, entry);
+      target: args?.target || args?.host || null,
+      sudo: args?.sudo === true || undefined,
+      dryRun: args?.dryRun === true || undefined,
+      reason: args?.reason || undefined,
+      isError: result?.isError ?? false,
+      ...(extra.durationMs !== undefined && { durationMs: extra.durationMs }),
+      ...(extra.exitCode !== undefined && { exitCode: extra.exitCode }),
+      args: safeArgs
+    };
+    // Strip undefined keys
+    const clean = Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined));
+    appendFileSync(AUDIT_LOG, JSON.stringify(clean) + "\n");
+    _queueForShipping({ ...clean, _log: "audit" });
+  } catch {}
+}
+
+// ── Remote log shipper ────────────────────────────────────────────────────────
+function _queueForShipping(entry) {
+  try {
+    const cfg = getConfig();
+    if (!cfg.logShip?.url) return;
+    _logShipQueue.push(entry);
+    const batchSize = cfg.logShip.batchSize ?? 20;
+    const flushMs = cfg.logShip.flushIntervalMs ?? 5000;
+    if (_logShipQueue.length >= batchSize) {
+      _flushLogShip();
+    } else if (!_logShipTimer) {
+      _logShipTimer = setTimeout(_flushLogShip, flushMs);
+    }
+  } catch {}
+}
+
+function _flushLogShip() {
+  _logShipTimer = null;
+  const batch = _logShipQueue.splice(0);
+  if (batch.length === 0) return;
+  try {
+    const cfg = getConfig();
+    const shipCfg = cfg.logShip;
+    if (!shipCfg?.url) return;
+    const body = JSON.stringify({ entries: batch, source: "ssh-ops", version: SERVER_VERSION });
+    let parsedUrl;
+    try { parsedUrl = new URL(shipCfg.url); } catch { return; }
+    const isHttps = parsedUrl.protocol === "https:";
+    const transport = isHttps ? https : null;
+    if (!transport) return; // only HTTPS shipping supported
+    const headers = {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+      ...(shipCfg.headers || {})
+    };
+    const req = transport.request(
+      { hostname: parsedUrl.hostname, path: parsedUrl.pathname + (parsedUrl.search || ""),
+        port: parsedUrl.port || 443, method: shipCfg.method || "POST", headers },
+      (res) => { res.resume(); }
+    );
+    req.on("error", () => {});
+    req.write(body);
+    req.end();
   } catch {}
 }
 
