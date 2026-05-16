@@ -5,6 +5,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [v1.20.0] — 2026-05-16
+
+### Added
+- **Windows SSH support** — Full Windows OpenSSH server support via PowerShell pipeline (`mode:"powershell"`)
+- **Auto OS detection** — `detectRemoteOs()` probes `uname || ver` on first connect, cached per session
+- **`shell` profile field** — `"bash" | "powershell" | "auto"` (default auto) — manual override
+- **`psQuote(v)`** — PowerShell single-quote escaper (exported)
+- **`packageScriptWindows`** — winget/choco/scoop auto-detect; all 8 actions
+- **`fileReadScriptWindows` / `fileWriteScriptWindows` / `filePatchScriptWindows`** — Windows-safe file ops
+- **13 Windows tools** in `ssh-tools-windows.mjs`: `ssh_win_inventory`, `ssh_win_health`, `ssh_win_disk`, `ssh_win_metrics`, `ssh_win_service`, `ssh_win_process`, `ssh_win_user`, `ssh_win_eventlog`, `ssh_win_schtask`, `ssh_win_firewall`, `ssh_win_ip_assign`, `ssh_win_acl`, `ssh_win_reg`
+- **Cross-platform** — `ssh_package`, `ssh_file_read/write/patch` auto-route to PS on Windows
+- **Linux-only guards** — 12 tools return clear error + Windows alternative on Windows targets
+- **Security** — Global backtick + `--%` rejection; Windows-specific validators (SAM username, registry hive, firewall rule names)
+
+### Total: 88 tools (was 75)
+
+---
+
+## [v1.19.0] — 2026-05-16
+
+### Added
+- **27 new tools** across 11 new module files
+- **Containers** — `ssh_compose` (docker-compose v1/v2 auto-detect), `ssh_k8s` (kubectl wrapper)
+- **Databases** — `ssh_db` (MySQL/PostgreSQL/Redis/MongoDB/SQLite; write keywords auto-require confirm)
+- **Web Servers** — `ssh_nginx`, `ssh_apache`
+- **Security** — `ssh_authorized_keys`, `ssh_fail2ban`, `ssh_audit`, `ssh_intrusion_check`, `ssh_certbot`
+- **System** — `ssh_sysctl`, `ssh_swap`, `ssh_kernel`, `ssh_limits`
+- **Network Utils** — `ssh_dns_check`, `ssh_traceroute`, `ssh_hosts`
+- **Performance** — `ssh_perf`, `ssh_dmesg`, `ssh_tcpdump`
+- **Deployment** — `ssh_deploy` (atomic with auto-rollback), `ssh_rollback`, `ssh_rsync`
+- **Storage** — `ssh_lvm`
+- **Fleet & AI-Native** — `ssh_fleet_health` (parallel health dashboard), `ssh_anomaly` (baseline detection), `ssh_change_tracker`
+
+### Total: 75 tools (was 48)
+
+---
+
+## [v1.18.0] — 2026-05-16
+
+### Added
+- **13 new tools** in 4 new module files (modular architecture)
+- **Network/Security** — `ssh_firewall` (ufw/firewalld/iptables), `ssh_ssl_cert`, `ssh_port_scan`
+- **Observability** — `ssh_tail`, `ssh_memory_report`, `ssh_systemd_timer`
+- **Storage/Deploy** — `ssh_mount`, `ssh_git`, `ssh_backup`
+- **Advanced** — `ssh_template`, `ssh_snapshot`, `ssh_compare`
+- **`ssh_run_watch`** — unified diff vs last output; saves AI context window
+- **Modular architecture** — `ssh-tools-*.mjs` pattern; server auto-loads via `_extraModules`
+
+### Security
+- Fixed 2 critical firewall-cmd `--add-rich-rule` injection bugs
+
+### Total: 48 tools (was 35)
+
+---
+
 ## [v1.17.0] — 2026-05-15
 
 ### Added

@@ -910,3 +910,97 @@ test("formatRunResult marks truncated flag and includes byte count in output", a
   assert.ok(out.includes("OUTPUT TRUNCATED"), "formatted output should include truncation notice");
   assert.ok(out.includes("2000000"), "truncation notice should include total byte count");
 });
+
+// ── Windows / PowerShell support tests (v1.20.0) ─────────────────────────────
+
+test("psQuote wraps value in single quotes", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=psquote-basic-${Date.now()}`;
+  const { psQuote } = await import(moduleUrl);
+  assert.equal(psQuote("hello"), "'hello'");
+  assert.equal(psQuote(""), "''");
+  assert.equal(psQuote("C:\\path\\file"), "'C:\\path\\file'");
+});
+
+test("psQuote escapes embedded single quotes (PS doubling)", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=psquote-escape-${Date.now()}`;
+  const { psQuote } = await import(moduleUrl);
+  assert.equal(psQuote("it's"), "'it''s'");
+  assert.equal(psQuote("a'b'c"), "'a''b''c'");
+  assert.equal(psQuote("''"), "''''''");
+});
+
+test("psQuote handles dollar sign safely (no PS expansion in single quotes)", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=psquote-dollar-${Date.now()}`;
+  const { psQuote } = await import(moduleUrl);
+  assert.equal(psQuote("$env:PATH"), "'$env:PATH'");
+  assert.equal(psQuote("${var}"), "'${var}'");
+});
+
+test("packageScriptWindows list action generates switch block for all 3 managers", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=wscript-list-${Date.now()}`;
+  const { packageScriptWindows } = await import(moduleUrl);
+  const script = packageScriptWindows({ action: "list" });
+  assert.ok(script.includes("winget list"), "should include winget list");
+  assert.ok(script.includes("choco list"), "should include choco list");
+  assert.ok(script.includes("scoop list"), "should include scoop list");
+});
+
+test("packageScriptWindows install requires packages", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=wscript-install-empty-${Date.now()}`;
+  const { packageScriptWindows } = await import(moduleUrl);
+  assert.throws(
+    () => packageScriptWindows({ action: "install", packages: [] }),
+    (err) => err instanceof Error && err.message.includes("packages is required"),
+    "should throw when packages empty for install"
+  );
+});
+
+test("packageScriptWindows with explicit manager skips detection", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=wscript-manager-${Date.now()}`;
+  const { packageScriptWindows } = await import(moduleUrl);
+  const script = packageScriptWindows({ action: "list", manager: "choco" });
+  assert.ok(script.includes("'choco'"), "should set pm to choco");
+  assert.ok(!script.includes("Get-Command winget"), "should not probe winget when manager forced");
+});
+
+test("packageScriptWindows throws on invalid action", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=wscript-invalid-${Date.now()}`;
+  const { packageScriptWindows } = await import(moduleUrl);
+  assert.throws(
+    () => packageScriptWindows({ action: "explode" }),
+    (err) => err instanceof Error,
+    "should throw on unknown action"
+  );
+});
+
+test("fileReadScriptWindows text mode uses ReadAllText", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=winread-text-${Date.now()}`;
+  const { fileReadScriptWindows } = await import(moduleUrl);
+  const script = fileReadScriptWindows("C:\\path\\file.txt", 51200, "text");
+  assert.ok(script.includes("ReadAllText"), "should use ReadAllText for text mode");
+  assert.ok(script.includes("51200"), "should include byte limit");
+});
+
+test("fileReadScriptWindows base64 mode uses ReadAllBytes and ToBase64String", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=winread-b64-${Date.now()}`;
+  const { fileReadScriptWindows } = await import(moduleUrl);
+  const script = fileReadScriptWindows("C:\\file.txt", 1024, "base64");
+  assert.ok(script.includes("ReadAllBytes"), "should use ReadAllBytes for base64");
+  assert.ok(script.includes("ToBase64String"), "should convert to base64");
+});
+
+test("fileWriteScriptWindows includes Copy-Item backup when backup:true", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=winwrite-backup-${Date.now()}`;
+  const { fileWriteScriptWindows } = await import(moduleUrl);
+  const withBackup = fileWriteScriptWindows("C:\\f.txt", "content", { backup: true });
+  assert.ok(withBackup.includes("Copy-Item") || withBackup.includes(".bak"), "should include backup step");
+  const noBackup = fileWriteScriptWindows("C:\\f.txt", "content", { backup: false });
+  assert.ok(!noBackup.includes("Copy-Item"), "should not include backup step when backup:false");
+});
+
+test("fileWriteScriptWindows base64 mode uses WriteAllBytes and FromBase64String", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=winwrite-b64-${Date.now()}`;
+  const { fileWriteScriptWindows } = await import(moduleUrl);
+  const script = fileWriteScriptWindows("C:\\f.txt", "SGVsbG8=", { encoding: "base64" });
+  assert.ok(script.includes("WriteAllBytes") || script.includes("FromBase64String"), "should handle base64 write");
+});

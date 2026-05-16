@@ -56,11 +56,15 @@ import * as _storage2Tools from "./ssh-tools-storage2.mjs";
 import * as _certbotTools from "./ssh-tools-certbot.mjs";
 import * as _fleetTools from "./ssh-tools-fleet.mjs";
 import * as _windowsTools from "./ssh-tools-windows.mjs";
+import * as _windows2Tools from "./ssh-tools-windows2.mjs";
+import * as _wireguardTools from "./ssh-tools-wireguard.mjs";
+import * as _storage3Tools from "./ssh-tools-storage3.mjs";
+import * as _benchTools from "./ssh-tools-bench.mjs";
 const _extraModules = [
   _netTools, _obsTools, _storeTools, _advTools, _sec2Tools,
   _containersTools, _dbTools, _webTools, _sys2Tools, _netutilsTools,
   _perfTools, _deploy2Tools, _storage2Tools, _certbotTools, _fleetTools,
-  _windowsTools
+  _windowsTools, _windows2Tools, _wireguardTools, _storage3Tools, _benchTools
 ];
 import https from "node:https";
 import net from "node:net";
@@ -1902,6 +1906,26 @@ fi
     }
 
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
+
+    // Windows: route to Get-ChildItem Env: / $env:KEY
+    const _envOs = await detectRemoteOs(args);
+    if (_envOs === "windows") {
+      const { psQuote } = await import("./ssh-core.mjs");
+      let psScript;
+      const key = args.key;
+      if (args.action === "list") {
+        psScript = `Get-ChildItem Env: | Select-Object Name, Value | Format-Table -AutoSize`;
+      } else if (args.action === "get") {
+        psScript = `[System.Environment]::GetEnvironmentVariable(${psQuote(key)}, 'Machine') ?? "(not set in Machine scope)"`;
+      } else if (args.action === "set") {
+        psScript = `[System.Environment]::SetEnvironmentVariable(${psQuote(key)}, ${psQuote(String(args.value))}, 'Machine'); Write-Output "Set ${key} in Machine scope"`;
+      } else {
+        psScript = `[System.Environment]::SetEnvironmentVariable(${psQuote(key)}, $null, 'Machine'); Write-Output "Removed ${key} from Machine scope"`;
+      }
+      const psResult = await runSshCommand({ ...args, command: psScript, mode: "powershell" });
+      return textResult(formatRunResult(psResult), psResult.exitCode !== 0);
+    }
+
     const result = await runSshCommand({ ...args, command, mode: "bash", sudo: ["set", "unset"].includes(args.action) });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
