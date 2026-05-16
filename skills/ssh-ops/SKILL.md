@@ -1,279 +1,263 @@
 ---
 name: ssh-ops
-description: SSH Ops MCP — 75 tools for remote SSH ops: commands, inventory, health, disk, logs, files, services, packages (14 managers), cron, users, docker, docker-compose, kubernetes, databases (MySQL/Postgres/Redis/MongoDB/SQLite), nginx, apache, firewall, TLS certs, port scan, fail2ban, security audit, intrusion check, authorized_keys, certbot, LVM, sysctl, swap, kernel, limits, rsync, deploy, rollback, fleet health dashboard, anomaly detection, change tracking, metrics, memory, perf, dmesg, tcpdump, DNS check, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server comparison, output diff watching, IP assignment, jump servers, file transfer, process management, env vars.
+description: SSH Ops MCP — 75 tools for remote SSH ops across Linux, BSD, macOS. Covers: exec, inventory, health, files, services, packages (14 managers), cron, timers, users, docker, compose, kubernetes, databases (5 engines), nginx, apache, firewall, TLS/certs/certbot, port scan, fail2ban, security audit, intrusion detection, authorized_keys, LVM, sysctl, swap, kernel, ulimits, rsync, atomic deploy, rollback, fleet health, anomaly detection, change tracking, perf, dmesg, tcpdump, DNS, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server diff, output diff watching, IP groups, jump servers, process management, env vars.
 ---
 
-# SSH Ops
+# SSH Ops — 75 Tools
 
-Use `ssh-ops` MCP tools. Target = profile name or `user@host`.
+Target = profile name OR `user@host`. All tools accept `target:` param.
 
-## Tools
+---
 
-**Read-only**
-- `ssh_profiles` — list profiles (no connect)
-- `ssh_inventory` — OS/CPU/RAM/disk/network
-- `ssh_disk_report` — disk/inode/container storage
-- `ssh_health_report` — load/services/processes/docker; fires alertWebhook if thresholds breached
-- `ssh_log_search` — journal or file grep; params: unit/pattern/lines/since/path
-- `ssh_network_check` — ping/port/TLS from remote server
-- `ssh_ping` — TCP reachability without auth; params: target/host/port/timeoutMs/count; returns reachable/avgLatencyMs
-- `ssh_metrics` — /proc metrics (no agent); returns cpuPercent/memPercent/memUsedMB/loadAvg/uptimeSeconds/diskIO/netIO
-- `ssh_diff` — compare remote file vs local or remote-vs-remote; params: target/remotePath/localPath/target2/remotePath2/context
-- `ssh_ssl_cert` — TLS certificate expiry + subject/SANs/fingerprint for a domain; runs openssl from remote; params: target/host/port
-- `ssh_port_scan` — listening ports via ss (netstat fallback); params: target/proto(tcp|udp|all)/sudo/filter
-- `ssh_memory_report` — detailed memory: totals/swap/huge pages/top-N processes by RSS; params: target/topN
-- `ssh_snapshot` — full server state JSON: OS/CPU/mem/disk/load/running services/ports/users/packages/top procs; params: target/timeoutMs
+## Quick Tool Selector
 
-**Exec**
+| Goal | Tool |
+|------|------|
+| Run a command | `ssh_run` |
+| Run on many servers | `ssh_run_multi` / `ssh_fleet_health` |
+| Monitor changes over time | `ssh_run_watch` |
+| Server health overview | `ssh_health_report` |
+| Full fleet status | `ssh_fleet_health` |
+| Compare two servers | `ssh_compare` |
+| Detect config drift | `ssh_snapshot` + `ssh_compare` |
+| Detect metric anomalies | `ssh_anomaly` |
+| Post-deploy verification | `ssh_change_tracker` |
+| Check disk space | `ssh_disk_report` |
+| Check memory | `ssh_memory_report` |
+| Performance snapshot | `ssh_perf` |
+| List running processes | `ssh_process` action=list |
+| Read log file | `ssh_tail` / `ssh_log_search` |
+| Capture packets | `ssh_tcpdump` |
+| Check TLS cert | `ssh_ssl_cert` |
+| Manage firewall | `ssh_firewall` |
+| Security scan | `ssh_audit` |
+| Check for intrusion | `ssh_intrusion_check` |
+| Manage SSH keys | `ssh_authorized_keys` |
+| Manage Let's Encrypt | `ssh_certbot` |
+| Install package | `ssh_package` action=install |
+| Manage service | `ssh_service` |
+| Manage docker containers | `ssh_docker` |
+| Manage docker-compose | `ssh_compose` |
+| Run kubectl | `ssh_k8s` |
+| Query database | `ssh_db` |
+| Manage nginx | `ssh_nginx` |
+| Manage apache | `ssh_apache` |
+| Edit remote file | `ssh_file_write` / `ssh_file_patch` |
+| Sync files | `ssh_rsync` / `ssh_transfer` |
+| Deploy code | `ssh_deploy` |
+| Rollback deployment | `ssh_rollback` |
+| Manage LVM | `ssh_lvm` |
+| Kernel parameters | `ssh_sysctl` |
+| DNS resolution from server | `ssh_dns_check` |
+| Trace network path | `ssh_traceroute` |
+
+---
+
+## Tool Reference
+
+### Exec
 - `ssh_run` — single host; params: command/target/sudo/mode/cwd/jumpHost/sshOptions
-- `ssh_run_multi` — parallel multi-host; `format:"json"` for structured output; `group:"prod"` targets all profiles with matching group field
-- `ssh_run_watch` — run command + diff vs last run; first call returns full output, subsequent calls return only changed lines (unified diff); params: command/target/resetCache — **use this to monitor recurring state without flooding context**
+- `ssh_run_multi` — parallel multi-host; `group:"prod"` targets all profiles with matching group; `format:"json"` for structured output
+- `ssh_run_watch` — run + diff vs last output; first call = full, subsequent = changed lines only; `resetCache:true` to reset *(saves AI context)*
+- `ssh_script` — upload+run local script file on remote; params: localScript/args/sudo/cwd
 
-**Files** *(CONFIRM before write)*
-- `ssh_file_read` — `encoding:"base64"` for binary
-- `ssh_file_write` — auto-backup; `sudo` param for root files
-- `ssh_file_patch` — line-range or regex replace
-- `ssh_tail` — read last N lines of remote file; optional followSeconds (like tail -f); params: target/path/lines/followSeconds
-- `ssh_template` — render `{{VAR}}` template locally, write rendered content to remote path; params: target/template/vars/remotePath/sudo/backup *(CONFIRM)*
+### Inventory & Health
+- `ssh_inventory` — OS/CPU/RAM/DMI/disks/PCI/network/load/service health
+- `ssh_health_report` — load/memory/disk/failed units/processes/docker; fires alertWebhook if thresholds breached
+- `ssh_disk_report` — df/inode/du/Docker storage hints; params: target/path/depth
+- `ssh_metrics` — structured /proc metrics (no agent): cpuPercent/memPercent/memUsedMB/loadAvg/uptimeSeconds/diskIO/netIO
+- `ssh_memory_report` — detailed memory: totals/swap/huge pages/top-N processes by RSS; params: target/topN
+- `ssh_snapshot` — full server state JSON: OS/CPU/mem/disk/load/services/ports/users/packages/top procs
+- `ssh_compare` — parallel snapshots of two servers → diff report (OS/kernel/services/ports/users/packages)
+- `ssh_fleet_health` — health check ALL profiles in parallel → summary table (server/status/cpu%/mem%/disk%/load/failed); params: group/timeoutMs
+- `ssh_anomaly` — compare current metrics to rolling 10-sample baseline; flags stddev deviations; params: target/updateBaseline/sensitivity(low|medium|high)
+- `ssh_ping` — TCP reachability (no SSH auth); returns reachable/avgLatencyMs; params: target/host/port/count
+- `ssh_diff` — compare remote file vs local or remote-vs-remote
 
-**Security** *(list read-only; add/remove/flush CONFIRM)*
-- `ssh_firewall` — manage ufw/firewalld/iptables rules; auto-detects active manager; params: target/action(list|add|remove|flush)/protocol/port/source/ruleSpec
+### Files *(CONFIRM writes)*
+- `ssh_file_read` — `encoding:"base64"` for binary; params: target/path/maxBytes
+- `ssh_file_write` — auto-backup; `sudo` for root files *(CONFIRM)*
+- `ssh_file_patch` — line-range or regex replace *(CONFIRM)*
+- `ssh_tail` — last N lines; optional `followSeconds` (live tail bounded); params: target/path/lines/followSeconds
+- `ssh_template` — render `{{VAR}}` template locally → write to remote path *(CONFIRM)*; params: target/template/vars/remotePath
+- `ssh_transfer` — scp local↔remote or remote↔remote; use `profile:path`; params: src/dst/recursive *(CONFIRM)*
+- `ssh_rsync` — rsync (runs locally); params: src/dst/exclude/delete/checksum/bwlimit/compress; `--delete` requires confirm
 
-**System** *(CONFIRM before write)*
-- `ssh_service` — status/start/stop/restart/enable/disable
-- `ssh_package` — apt/yum/dnf/apk auto-detect; list/search/install/remove/update/upgrade
-- `ssh_cron` — list/add/remove for any user
-- `ssh_systemd_timer` — list/status/enable/disable/start/stop systemd timers; params: target/action/timer *(enable/disable/start/stop CONFIRM)*
-- `ssh_ip_assign` — permanent IP; `ips`/`group`/`fromFile`; auto-detects netplan/NM/network-scripts/networkd/rc.local; always sudo
-- `ssh_user` — add/del/mod/list/info/passwd/lock/unlock; groups/shell/home/system
-- `ssh_chmod` — chmod+chown+chgrp; mode/owner/group/recursive
-- `ssh_sudo_rule` — /etc/sudoers.d/; visudo -c validation; `commands` required (no default ALL); nopasswd defaults false; list/add/remove
-- `ssh_docker` — list/logs/restart/stop/start/inspect/stats; params: action/container/lines/since/sudo
-- `ssh_env` — /etc/environment list/get/set/unset; params: action/key/value
-- `ssh_process` — list processes or kill; params: action/pid/processName/signal/filter
-- `ssh_script` — upload+run local script on remote via bash; params: localScript/args/sudo/cwd; must be within plugin dir
-- `ssh_transfer` — scp local↔remote or remote↔remote; params: src/dst/recursive; use `profile:path` notation
-- `ssh_mount` — list mounts (findmnt) or mount/umount filesystems; params: target/action(list|mount|umount)/device/mountpoint/fstype/options *(mount/umount CONFIRM)*
+### Logs & Observability
+- `ssh_log_search` — journal or file grep; params: unit/pattern/lines/since/path
+- `ssh_dmesg` — kernel ring buffer; levels: all/emerg/alert/crit/err/warn/notice/info/debug; params: target/level/lines/filter/since
+- `ssh_perf` — vmstat+iostat+/proc network delta; params: target/interval/count
+- `ssh_tcpdump` — bounded capture (max 200 packets / 30s) *(CONFIRM)*; params: target/interface/filter/count/seconds
+- `ssh_change_tracker` — `find -mmin -N` for recently modified files; params: target/minutes/path/exclude
 
-**Deployment / Storage** *(CONFIRM for writes)*
-- `ssh_git` — git ops on remote repo; params: target/action(status|pull|fetch|log|checkout|diff)/repoPath/branch/remote/logLines *(pull/checkout CONFIRM)*
-- `ssh_backup` — tar.gz backup management; params: target/action(create|list|restore|prune)/source/dest/backupFile/restoreTo/maxCount *(create/restore/prune CONFIRM)*
+### System *(CONFIRM writes)*
+- `ssh_service` — status/start/stop/restart/enable/disable *(non-status CONFIRM)*
+- `ssh_package` — 14 managers auto-detected: apt/dnf/yum/apk/pacman/zypper/xbps/snap/flatpak/pkg/emerge/nix/opkg/brew; actions: list/search/info/install/remove/update/upgrade/autoremove; `manager:` param to force specific PM *(install/remove/update/upgrade/autoremove CONFIRM)*
+- `ssh_cron` — list/add/remove crontab for any user *(add/remove CONFIRM)*
+- `ssh_systemd_timer` — list/status/enable/disable/start/stop systemd timers *(mutating CONFIRM)*
+- `ssh_user` — add/del/mod/list/info/passwd/lock/unlock *(mutating CONFIRM)*
+- `ssh_chmod` — chmod+chown+chgrp; mode/owner/group/recursive *(CONFIRM)*
+- `ssh_sudo_rule` — /etc/sudoers.d/; visudo -c validation; commands required; nopasswd defaults false *(mutating CONFIRM)*
+- `ssh_env` — /etc/environment list/get/set/unset *(set/unset CONFIRM)*
+- `ssh_process` — list or kill by PID/name; signal param *(kill CONFIRM)*
+- `ssh_mount` — list(findmnt)/mount/umount filesystems *(mount/umount CONFIRM)*
+- `ssh_sysctl` — kernel params list/get/set/search; `persist:true` writes to /etc/sysctl.d/ *(set CONFIRM)*
+- `ssh_swap` — status/add/remove/on/off swap files; params: target/action/swapFile/sizeMB *(mutating CONFIRM)*
+- `ssh_kernel` — version/modules/dmesg/params; read-only
+- `ssh_limits` — /etc/security/limits.conf list/get/set/remove/current *(set/remove CONFIRM)*
 
-**Analysis**
-- `ssh_compare` — snapshot two servers and diff side-by-side; params: target1/target2/timeoutMs — shows OS/kernel/services/ports/users/packages differences
+### Networking
+- `ssh_network_check` — ping/port/TLS from remote server
+- `ssh_port_scan` — listening ports via ss (netstat fallback); params: target/proto(tcp|udp|all)/filter
+- `ssh_ssl_cert` — TLS cert expiry+subject+SANs+fingerprint; runs openssl from remote; params: target/host/port
+- `ssh_firewall` — ufw/firewalld/iptables auto-detect; actions: list/add/remove/flush; params: target/action/protocol/port/source/ruleSpec *(add/remove/flush CONFIRM)*
+- `ssh_dns_check` — DNS resolution FROM remote server (dig→nslookup→host fallback); params: target/domain/type/nameserver
+- `ssh_traceroute` — mtr/tracepath/traceroute from remote; params: target/host/tool/maxHops
+- `ssh_hosts` — /etc/hosts list/add/remove with auto-backup *(add/remove CONFIRM)*
+- `ssh_ip_assign` — permanent IP; auto-detects netplan/NM/network-scripts/networkd/rc.local *(CONFIRM)*
 
-**Containers** *(CONFIRM for up/down/restart/stop/pull/build; apply/delete/scale CONFIRM)*
-- `ssh_compose` — docker-compose management; auto-detects v1/v2; actions: up/down/ps/logs/pull/build/restart/stop/config/exec; params: target/action/service/composeFile/detach/lines/execCommand
-- `ssh_k8s` — kubectl wrapper; actions: get/describe/logs/exec/apply/delete/rollout/scale/top/events; params: target/action/resource/name/namespace/selector/outputFormat/tailLines
+### Security *(read-only scans safe; mutations CONFIRM)*
+- `ssh_authorized_keys` — list/add/remove ~/.ssh/authorized_keys; validates key format (ssh-rsa/ed25519/ecdsa); deduplicates *(add/remove CONFIRM)*
+- `ssh_fail2ban` — status/list-jails/banned-ips/ban/unban/reload *(ban/unban/reload CONFIRM)*
+- `ssh_audit` — read-only scan: SUID/SGID files, world-writable dirs, passwordless sudo, empty passwords, SSH config weaknesses, 0.0.0.0 listeners, recent /etc changes
+- `ssh_intrusion_check` — parse auth logs: brute force IPs (>10 failures), root logins, new UIDs, suspicious patterns; params: target/hours(1-168)
+- `ssh_certbot` — Let's Encrypt: list/renew/renew-all/status/expand/delete; `dryRun:true` passes `--dry-run` *(mutating CONFIRM)*
 
-**Databases** *(write queries need confirm)*
-- `ssh_db` — query local MySQL/PostgreSQL/Redis/MongoDB/SQLite; auto-detect engine; actions: query/list-dbs/list-tables/stats/ping/slow-queries; write keywords (INSERT/UPDATE/DELETE/DROP) auto-require confirm
+### Containers *(CONFIRM mutating)*
+- `ssh_compose` — docker-compose; auto-detects v2/v1; actions: up/down/ps/logs/pull/build/restart/stop/config/exec; params: target/action/service/composeFile/detach/lines *(up/down/restart/stop/pull/build CONFIRM)*
+- `ssh_docker` — list/logs/restart/stop/start/inspect/stats; params: action/container/lines/since *(restart/stop/start CONFIRM)*
+- `ssh_k8s` — kubectl: get/describe/logs/exec/apply/delete/rollout/scale/top/events; params: resource/name/namespace/selector/outputFormat/tailLines *(apply/delete/scale/rollout-restart/rollout-undo CONFIRM)*
 
-**Web Servers** *(CONFIRM reload/restart/enable/disable)*
-- `ssh_nginx` — nginx: test/reload/restart/status/list-sites/enable/disable/logs/show-config; params: target/action/site/lines
-- `ssh_apache` — apache: test/reload/restart/status/list-sites/enable-site/disable-site/list-mods/enable-mod/disable-mod/logs; params: target/action/site/module
+### Databases *(write queries CONFIRM)*
+- `ssh_db` — query local MySQL/PostgreSQL/Redis/MongoDB/SQLite; auto-detect engine; actions: query/list-dbs/list-tables/stats/ping/slow-queries; write keywords (INSERT/UPDATE/DELETE/DROP/CREATE/ALTER/TRUNCATE) auto-gate on confirm; query passed via env var (injection-safe); params: target/action/engine/query/database/dbUser/dbHost
 
-**Security** *(add/remove CONFIRM)*
-- `ssh_authorized_keys` — manage ~/.ssh/authorized_keys; list/add/remove; validates key format; deduplicates; params: target/action/user/key
-- `ssh_fail2ban` — fail2ban jails: status/list-jails/banned-ips/ban/unban/reload; params: target/action/jail/ip
-- `ssh_audit` — read-only security scan: SUID files, world-writable dirs, passwordless sudo, empty passwords, SSH config weaknesses, failed logins, 0.0.0.0 listeners
-- `ssh_intrusion_check` — parse auth logs: brute force IPs, root logins, new accounts, suspicious patterns; params: target/hours
-- `ssh_certbot` — Let's Encrypt: list/renew/renew-all/status/expand/delete; --dry-run safe; params: target/action/domain
+### Web Servers *(CONFIRM reload/restart/enable/disable)*
+- `ssh_nginx` — test/reload/restart/status/list-sites/enable/disable/logs/show-config; params: target/action/site/lines
+- `ssh_apache` — test/reload/restart/status/list-sites/enable-site/disable-site/list-mods/enable-mod/disable-mod/logs; params: target/action/site/module
 
-**System** *(set/write CONFIRM)*
-- `ssh_sysctl` — kernel params: list/get/set/search; optional persist to /etc/sysctl.d/; params: target/action/key/value/persist/filter
-- `ssh_swap` — swap: status/add/remove/on/off; create swap files with dd+mkswap; params: target/action/swapFile/sizeMB
-- `ssh_kernel` — kernel info: version/modules/dmesg/params; dmesg level filter (all/err/warn/info); params: target/action/level/lines/filter
-- `ssh_limits` — /etc/security/limits.conf: list/get/set/remove/current; validates item against allowlist; params: target/action/domain/limitType/item/value
+### Storage
+- `ssh_backup` — tar.gz create/list/restore/prune with rotation; params: target/action/source/dest/maxCount *(create/restore/prune CONFIRM)*
+- `ssh_lvm` — pvs/vgs/lvs list/status/extend/create-snapshot/remove-snapshot/resize; params: target/action/vg/lv/size/snapshotName *(mutating CONFIRM)*
 
-**Network Utils**
-- `ssh_dns_check` — DNS resolution FROM remote server via dig/nslookup/host; params: target/domain/type/nameserver/short
-- `ssh_traceroute` — traceroute/tracepath/mtr from remote; params: target/host/tool/maxHops
-- `ssh_hosts` — /etc/hosts: list/add/remove; validates IP+hostname; auto-backup on remove *(add/remove CONFIRM)*
+### Deployment *(CONFIRM)*
+- `ssh_git` — git ops on remote repo: status/pull/fetch/log/checkout/diff; params: target/action/repoPath/branch *(pull/checkout CONFIRM)*
+- `ssh_deploy` — atomic: git pull → buildCmd → restart services → health check → auto-rollback on fail; params: target/repoPath/branch/buildCmd/services/healthCheck/rollbackOnFail
+- `ssh_rollback` — restore latest/named backup + restart services + health check; params: target/backupDir/backupFile/restoreTo/services/healthCheck
+- `ssh_rsync` — local rsync (runs on local machine); params: src/dst/exclude/delete/checksum/bwlimit *(--delete CONFIRM)*
 
-**Performance**
-- `ssh_perf` — vmstat+iostat+/proc snapshot; params: target/interval/count/include
-- `ssh_dmesg` — kernel ring buffer with level filter; params: target/level/lines/filter/since
-- `ssh_tcpdump` — bounded capture (max 200 packets / 30s); params: target/interface/filter/count/seconds *(CONFIRM)*
+### Profile & Infrastructure Management
+- **Profiles** *(CONFIRM add/remove)*: `ssh_add_profile(name,host,user,port,password,identityFile,access,jumpProfile,jumpUser,targetUser,localSwitchUser,group,allowedCommands,extends,hidden)` / `ssh_remove_profile` / `ssh_profiles` / `ssh_list_keys`
+- **Jump servers** *(CONFIRM add/remove)*: `ssh_add_jump(name,host,user,commonUser)` / `ssh_remove_jump` / `ssh_list_jumps`
+- **IP groups**: `ssh_save_ip_group` / `ssh_remove_ip_group` / `ssh_list_ip_groups`
 
-**Deployment** *(CONFIRM)*
-- `ssh_deploy` — atomic deploy: git pull → build → restart services → health check → auto-rollback; params: target/repoPath/branch/buildCmd/services/healthCheck/rollbackOnFail
-- `ssh_rollback` — restore backup + restart services + health check; params: target/backupDir/backupFile/restoreTo/services/healthCheck
-- `ssh_rsync` — rsync local↔remote (runs locally); params: src/dst/exclude/delete/checksum/bwlimit/compress *(--delete needs confirm)*
+---
 
-**Storage**
-- `ssh_lvm` — LVM: list/status/extend/create-snapshot/remove-snapshot/resize; params: target/action/vg/lv/size/snapshotName *(mutating CONFIRM)*
+## Key Behaviors
 
-**Fleet & AI-Native**
-- `ssh_fleet_health` — parallel health check across ALL profiles → summary table (server/status/cpu%/mem%/disk%/load/failed-services); params: group/timeoutMs
-- `ssh_anomaly` — compare current metrics to rolling baseline; flags deviations; stores history locally per target; params: target/updateBaseline/sensitivity(low|medium|high)
-- `ssh_change_tracker` — find files modified in last N minutes; params: target/minutes/path/exclude — good for post-deploy change verification
+### Confirm Required (all mutating ops)
+Pass `confirm:true` or server returns error. Pass `reason:"why"` to log intent.
+New in v1.19: ssh_compose(up/down/restart/stop/pull/build), ssh_k8s(apply/delete/scale/rollout-restart), ssh_db(write keywords), ssh_nginx/apache(reload/restart/enable/disable), ssh_authorized_keys(add/remove), ssh_fail2ban(ban/unban/reload), ssh_certbot(renew/expand/delete), ssh_sysctl(set), ssh_swap(add/remove/on/off), ssh_limits(set/remove), ssh_hosts(add/remove), ssh_lvm(extend/snapshot/resize), ssh_deploy, ssh_rollback, ssh_tcpdump.
 
-**IP groups**
-- `ssh_save_ip_group` / `ssh_remove_ip_group` / `ssh_list_ip_groups`
+### Double-Confirm (ask user twice before calling tool)
+| Category | Triggers |
+|----------|---------|
+| Data destruction | `rm -rf`, `dd`, `mkfs`, `DROP TABLE`, `wipefs`, `> file` overwrite |
+| Critical service | restart/stop/disable on nginx, mysql, postgresql, redis, sshd, docker, kubelet |
+| Access changes | `ssh_user` del+removeHome, `ssh_sudo_rule` remove, passwd on root |
+| Critical package | remove/purge: kernel, openssh, systemd, libc |
+| Network | `ssh_ip_assign` on prod; firewall flush; default route changes |
+| Bulk | `ssh_run_multi` write/delete/restart across 3+ hosts |
+| Power | reboot/shutdown/halt/poweroff |
+| k8s | `kubectl delete` on running workloads; namespace delete |
 
-**Profile mgmt** *(CONFIRM for add/remove)*
-- `ssh_add_profile(name,host,user,port,password,identityFile,access,jumpProfile,jumpUser,targetUser,localSwitchUser,group,allowedCommands,extends,hidden)`
-- `ssh_remove_profile` / `ssh_list_keys`
+### dryRun
+All mutating tools accept `dryRun:true` → returns bash script preview without executing.
 
-**Jump servers** *(CONFIRM for add/remove)*
-- `ssh_add_jump(name,host,user,commonUser)` — appends to -J chain
-- `ssh_remove_jump` / `ssh_list_jumps`
+### Audit
+All calls logged to `ssh-ops-audit.log` (passwords redacted). `rateLimitPerMin` default 60/target/min.
 
-## New IP — auto-try first, ask later
+---
 
-Unknown IP/host → do NOT ask for credentials first:
-1. `ssh_profiles` → note jump chain / commonUser
-2. Try `ssh_run(host=<IP>, user=<commonUser|root>, command="hostname && uptime")` with same routing as existing profiles
-3. Success → `ssh_add_profile`, proceed. Failure → report error, ask user.
-
-## Routing modes
+## Routing Modes
 
 | Config | Behavior |
 |--------|----------|
 | `jumpChain: [b1,b2]` | SSH `-J user@b1,user@b2` multi-hop |
-| `jumpProfile`+`jumpUser`+`targetUser` | Connect to jump host, run `sudo -n -u jumpUser ssh targetUser@dest` from there |
-| `localSwitchUser` | ssh-ops IS on bastion — runs `sudo -n -u <user> ssh dest` locally; do NOT add jump server |
+| `jumpProfile`+`jumpUser`+`targetUser` | Connect to bastion, `sudo -n -u jumpUser ssh targetUser@dest` |
+| `localSwitchUser` | ssh-ops IS the bastion — `sudo -n -u <user> ssh dest` locally |
 
-`localSwitchUser` per-profile: `ssh_add_profile(name="web1", host="10.0.1.10", localSwitchUser="relay")`
-Or globally in `defaults.localSwitchUser`.
+### New IP — auto-try first
+Unknown host → do NOT ask for credentials:
+1. `ssh_profiles` → note routing/commonUser
+2. `ssh_run(host=<IP>, user=<commonUser|root>, command="hostname && uptime")`
+3. Success → `ssh_add_profile`, proceed. Fail → report error, ask.
 
-## Profile features
+---
 
-- **`allowedCommands`** — per-profile command allowlist; `ssh_run` rejects commands not starting with a listed prefix
-  ```
-  ssh_add_profile(name="prod", host="x.x.x.x", allowedCommands=["systemctl status","df -h","journalctl -n"])
-  ```
-- **`group`** — tag profiles for `ssh_run_multi` group targeting: `group:"prod"` runs on all prod-tagged profiles
-- **`extends`** — inherit another profile's fields (child wins on conflict, single-level only):
-  ```yaml
-  base: { user: ubuntu, port: 22 }
-  web-1: { extends: base, host: 10.0.1.1, group: prod }
-  ```
-- **`hidden:true`** — profile excluded from `ssh_profiles` listing but still usable when targeted directly
-- **`exposeProfiles:false`** config — hides `ssh_profiles` tool from tools/list entirely
+## Profile Features
 
-## dryRun + reason
+- **`allowedCommands`** — per-profile command allowlist; ssh_run rejects non-matching prefixes
+- **`group`** — for `ssh_run_multi(group:"prod")` and `ssh_fleet_health(group:"prod")`
+- **`extends`** — inherit parent profile fields (child wins); single-level only
+- **`hidden:true`** — excluded from `ssh_profiles` listing
+- **`password`** — stored AES-256-GCM encrypted; requires sshpass on local machine
+- **`exposeProfiles:false`** config — hides profile tools from tools/list entirely
 
-All mutating tools accept:
-- `dryRun:true` → returns the bash script that would run, without executing
-- `reason:"why"` → logged to `ssh-ops-audit.log` and shown in confirm message
+---
 
-## Audit + rate limiting
+## Context-Saving Patterns
 
-- All tool calls logged to `ssh-ops-audit.log` (passwords redacted)
-- `rateLimitPerMin` config (default 60) — per target per minute
-
-## Large output — export to local file
-
-When expected output > ~100 lines (user lists, log dumps, full inventories, bulk data):
-**Do NOT stream back through MCP** — wastes tokens and hits limits.
-
-Instead:
-1. `ssh_run` → pipe output to remote temp file:
-   ```
-   ssh_run(target=X, command="<cmd> > /tmp/ssh-ops-export.ext")
-   ```
-2. Pull to local via Bash scp:
-   ```bash
-   scp user@host:/tmp/ssh-ops-export.ext ~/Downloads/ssh-ops-export.ext
-   ```
-3. Tell user: "Saved to ~/Downloads/ssh-ops-export.ext — open to review."
-4. Clean up remote: `ssh_run(command="rm /tmp/ssh-ops-export.ext")`
-
-**Extension by situation:**
-
-| Data type | Extension |
-|-----------|-----------|
-| User/email lists, tables | `.csv` |
-| Logs, journal output | `.txt` |
-| JSON API / structured | `.json` |
-| Config file dumps | `.conf` / `.yaml` |
-| Mixed/unknown | `.txt` |
-
-**Trigger on:** "list all users", "export logs", "show all X", "dump config", any query where result set is unbounded or known large.
-
-## Safety
-
-- `authFailed:true` → `ssh_list_keys` → update via `ssh_add_profile`/`ssh_add_jump`; creds reused silently until failure
-- Read-only first; sudo = `sudo -n` (never prompts)
-- CONFIRM writes: `ssh_file_write/patch`, `ssh_service` (non-status), `ssh_package` (non-list/search), `ssh_cron` (add/remove), `ssh_ip_assign`, `ssh_user` (add/del/mod/passwd), `ssh_chmod`, `ssh_sudo_rule` (add/remove), `ssh_add_profile`, `ssh_remove_profile`, `ssh_add_jump`, `ssh_remove_jump`, `ssh_run`+`ssh_run_multi` (sudo:true), `ssh_docker` (restart/stop/start), `ssh_env` (set/unset), `ssh_process` (kill), `ssh_script`, `ssh_transfer`, `ssh_firewall` (add/remove/flush), `ssh_systemd_timer` (enable/disable/start/stop), `ssh_mount` (mount/umount), `ssh_git` (pull/checkout), `ssh_backup` (create/restore/prune), `ssh_template`
-- Summarize output; skip raw walls unless asked
-
-## Mutating tools — confirm param required
-
-All write/mutating tools require `confirm:true` parameter, or server returns error.
-Mutating: ssh_file_write, ssh_file_patch, ssh_service (start/stop/restart/enable/disable),
-ssh_package (install/remove/update/upgrade), ssh_cron (add/remove), ssh_ip_assign,
-ssh_user (add/del/mod/passwd/lock/unlock), ssh_chmod, ssh_sudo_rule (add/remove),
-ssh_add_profile, ssh_remove_profile, ssh_add_jump, ssh_remove_jump,
-ssh_run (sudo:true), ssh_run_multi (sudo:true),
-ssh_docker (restart/stop/start), ssh_env (set/unset), ssh_process (kill),
-ssh_script, ssh_transfer,
-ssh_firewall (add/remove/flush), ssh_systemd_timer (enable/disable/start/stop),
-ssh_mount (mount/umount), ssh_git (pull/checkout),
-ssh_backup (create/restore/prune), ssh_template.
-
-## Double confirmation — critical / destructive commands
-
-For the operations below, ask **twice** before executing. First ask states what will happen; second ask requires explicit "yes" before calling any tool.
-
-**Requires double confirmation:**
-
-| Category | Triggers |
-|----------|---------|
-| Data destruction | `rm -rf`, `dd`, `mkfs`, `shred`, `truncate`, `> file` (overwrite), `DROP TABLE`, `wipefs` |
-| Service impact | `ssh_service` restart/stop/disable on `nginx`, `mysql`, `postgresql`, `redis`, `sshd`, `docker`, `kubelet` or any db/web/auth service |
-| User/access changes | `ssh_user` del (especially with `removeHome:true`), `ssh_sudo_rule` remove, `ssh_user` passwd on root/admin |
-| Package removal | `ssh_package` remove/purge on system-critical packages (kernel, openssh, systemd, libc) |
-| IP/network changes | `ssh_ip_assign` on production servers; any command touching default route or firewall rules |
-| Bulk operations | `ssh_run_multi` with any write/delete/restart command across 3+ hosts |
-| Reboot/shutdown | `reboot`, `shutdown`, `halt`, `poweroff` |
-
-**Format:**
-
+### Monitor without flooding context
 ```
-⚠ CRITICAL OPERATION — [what will happen, which target, what is irreversible]
-
-Confirmation 1/2: Type "yes" to proceed →
-[wait for user]
-
-Final confirmation 2/2: This cannot be undone. Type "yes" again to execute →
-[wait for user — then call tool]
-```
-
-If user says "proceed automatically" or "no confirmation needed" at session start, skip to single confirm for writes but still double-confirm for irreversible destructive actions (data deletion, reboots, mass multi-host writes).
-
-## Output diff watching (context-efficient monitoring)
-
-`ssh_run_watch` stores last output per target+command in memory. On subsequent calls, returns only changed lines as a unified diff. Use for recurring checks where you only care about what changed.
-
-```
-# First call — full output
+# First call: full output
 ssh_run_watch(target="prod", command="systemctl list-units --state=failed")
-
-# Second call — only shows new failures or recovered services
-ssh_run_watch(target="prod", command="systemctl list-units --state=failed")
-# Returns: "[watch] No change since 2026-05-16T10:30:00Z"
-# OR:      "[watch] Changed since ...: <diff>"
+# Subsequent: unified diff only — "[watch] Changed since 2026-05-16T10:30:00Z: ..."
 ```
 
-Use `resetCache:true` to force a fresh full output.
-
-## Server comparison and drift detection
-
+### Large output → local file
 ```
-# Snapshot individual server
-ssh_snapshot(target="prod-1")  → JSON with OS/services/ports/packages/users
-
-# Compare two servers for drift
-ssh_compare(target1="prod-1", target2="prod-2")  → diff report showing differences
+ssh_run(target=X, command="cmd > /tmp/out.txt")
+scp user@host:/tmp/out.txt ~/Downloads/out.txt   # via Bash tool
+ssh_run(target=X, command="rm /tmp/out.txt")
 ```
 
-## Auto-update
+### Fleet security sweep
+```
+ssh_fleet_health()                      → all servers in one call
+ssh_audit(target="prod")               → security scan
+ssh_intrusion_check(target="prod", hours=24)  → auth log analysis
+```
 
-Auto-update disabled by default. Set `SSH_OPS_AUTO_UPDATE=1` env var to enable.
+### Anomaly detection workflow
+```
+# Build baseline (first few calls):
+ssh_anomaly(target="prod", updateBaseline=true)
+
+# Monitor (flags deviations > 2x stddev by default):
+ssh_anomaly(target="prod", sensitivity="medium")
+# Returns: "ANOMALY: cpuPercent 87.3 vs baseline 12.1 (mean±std: 12.1±3.2)"
+```
+
+### Atomic deploy with auto-rollback
+```
+ssh_deploy(
+  target="prod",
+  repoPath="/var/www/app",
+  branch="main",
+  buildCmd="npm ci && npm run build",
+  services=["app.service"],
+  healthCheck="curl -sf http://localhost:3000/health",
+  rollbackOnFail=true,
+  confirm=true
+)
+```
+
+---
+
+## Auto-Update
+
+Disabled by default. `SSH_OPS_AUTO_UPDATE=1` to enable.
 
 ## Truncation
 
-Truncation messages include exact byte counts: `[OUTPUT TRUNCATED: received 2345678 bytes, limit 2000000 bytes — 345678 bytes dropped]`.
+Output truncated at `maxOutputBytes` (default 2MB): `[OUTPUT TRUNCATED: received X bytes, limit Y bytes — Z bytes dropped]`.
