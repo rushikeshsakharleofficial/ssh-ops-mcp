@@ -39,7 +39,22 @@ import * as _netTools from "./ssh-tools-network.mjs";
 import * as _obsTools from "./ssh-tools-observability.mjs";
 import * as _storeTools from "./ssh-tools-storage.mjs";
 import * as _advTools from "./ssh-tools-advanced.mjs";
-const _extraModules = [_netTools, _obsTools, _storeTools, _advTools];
+import * as _sec2Tools from "./ssh-tools-security2.mjs";
+import * as _containersTools from "./ssh-tools-containers.mjs";
+import * as _dbTools from "./ssh-tools-database.mjs";
+import * as _webTools from "./ssh-tools-webserver.mjs";
+import * as _sys2Tools from "./ssh-tools-system2.mjs";
+import * as _netutilsTools from "./ssh-tools-netutils.mjs";
+import * as _perfTools from "./ssh-tools-perf.mjs";
+import * as _deploy2Tools from "./ssh-tools-deploy2.mjs";
+import * as _storage2Tools from "./ssh-tools-storage2.mjs";
+import * as _certbotTools from "./ssh-tools-certbot.mjs";
+import * as _fleetTools from "./ssh-tools-fleet.mjs";
+const _extraModules = [
+  _netTools, _obsTools, _storeTools, _advTools, _sec2Tools,
+  _containersTools, _dbTools, _webTools, _sys2Tools, _netutilsTools,
+  _perfTools, _deploy2Tools, _storage2Tools, _certbotTools, _fleetTools
+];
 import https from "node:https";
 import net from "node:net";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

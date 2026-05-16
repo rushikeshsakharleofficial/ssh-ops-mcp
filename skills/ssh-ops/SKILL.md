@@ -1,6 +1,6 @@
 ---
 name: ssh-ops
-description: SSH Ops MCP — 48 tools for remote SSH ops: commands, inventory, health, disk, logs, files, services, packages, cron, users, docker, metrics, firewall, TLS certs, port scan, log tail, memory, timers, mounts, git, backups, templates, snapshots, server comparison, output diff watching, IP assignment, jump servers, file transfer, process management, env vars.
+description: SSH Ops MCP — 75 tools for remote SSH ops: commands, inventory, health, disk, logs, files, services, packages (14 managers), cron, users, docker, docker-compose, kubernetes, databases (MySQL/Postgres/Redis/MongoDB/SQLite), nginx, apache, firewall, TLS certs, port scan, fail2ban, security audit, intrusion check, authorized_keys, certbot, LVM, sysctl, swap, kernel, limits, rsync, deploy, rollback, fleet health dashboard, anomaly detection, change tracking, metrics, memory, perf, dmesg, tcpdump, DNS check, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server comparison, output diff watching, IP assignment, jump servers, file transfer, process management, env vars.
 ---
 
 # SSH Ops
@@ -61,6 +61,53 @@ Use `ssh-ops` MCP tools. Target = profile name or `user@host`.
 
 **Analysis**
 - `ssh_compare` — snapshot two servers and diff side-by-side; params: target1/target2/timeoutMs — shows OS/kernel/services/ports/users/packages differences
+
+**Containers** *(CONFIRM for up/down/restart/stop/pull/build; apply/delete/scale CONFIRM)*
+- `ssh_compose` — docker-compose management; auto-detects v1/v2; actions: up/down/ps/logs/pull/build/restart/stop/config/exec; params: target/action/service/composeFile/detach/lines/execCommand
+- `ssh_k8s` — kubectl wrapper; actions: get/describe/logs/exec/apply/delete/rollout/scale/top/events; params: target/action/resource/name/namespace/selector/outputFormat/tailLines
+
+**Databases** *(write queries need confirm)*
+- `ssh_db` — query local MySQL/PostgreSQL/Redis/MongoDB/SQLite; auto-detect engine; actions: query/list-dbs/list-tables/stats/ping/slow-queries; write keywords (INSERT/UPDATE/DELETE/DROP) auto-require confirm
+
+**Web Servers** *(CONFIRM reload/restart/enable/disable)*
+- `ssh_nginx` — nginx: test/reload/restart/status/list-sites/enable/disable/logs/show-config; params: target/action/site/lines
+- `ssh_apache` — apache: test/reload/restart/status/list-sites/enable-site/disable-site/list-mods/enable-mod/disable-mod/logs; params: target/action/site/module
+
+**Security** *(add/remove CONFIRM)*
+- `ssh_authorized_keys` — manage ~/.ssh/authorized_keys; list/add/remove; validates key format; deduplicates; params: target/action/user/key
+- `ssh_fail2ban` — fail2ban jails: status/list-jails/banned-ips/ban/unban/reload; params: target/action/jail/ip
+- `ssh_audit` — read-only security scan: SUID files, world-writable dirs, passwordless sudo, empty passwords, SSH config weaknesses, failed logins, 0.0.0.0 listeners
+- `ssh_intrusion_check` — parse auth logs: brute force IPs, root logins, new accounts, suspicious patterns; params: target/hours
+- `ssh_certbot` — Let's Encrypt: list/renew/renew-all/status/expand/delete; --dry-run safe; params: target/action/domain
+
+**System** *(set/write CONFIRM)*
+- `ssh_sysctl` — kernel params: list/get/set/search; optional persist to /etc/sysctl.d/; params: target/action/key/value/persist/filter
+- `ssh_swap` — swap: status/add/remove/on/off; create swap files with dd+mkswap; params: target/action/swapFile/sizeMB
+- `ssh_kernel` — kernel info: version/modules/dmesg/params; dmesg level filter (all/err/warn/info); params: target/action/level/lines/filter
+- `ssh_limits` — /etc/security/limits.conf: list/get/set/remove/current; validates item against allowlist; params: target/action/domain/limitType/item/value
+
+**Network Utils**
+- `ssh_dns_check` — DNS resolution FROM remote server via dig/nslookup/host; params: target/domain/type/nameserver/short
+- `ssh_traceroute` — traceroute/tracepath/mtr from remote; params: target/host/tool/maxHops
+- `ssh_hosts` — /etc/hosts: list/add/remove; validates IP+hostname; auto-backup on remove *(add/remove CONFIRM)*
+
+**Performance**
+- `ssh_perf` — vmstat+iostat+/proc snapshot; params: target/interval/count/include
+- `ssh_dmesg` — kernel ring buffer with level filter; params: target/level/lines/filter/since
+- `ssh_tcpdump` — bounded capture (max 200 packets / 30s); params: target/interface/filter/count/seconds *(CONFIRM)*
+
+**Deployment** *(CONFIRM)*
+- `ssh_deploy` — atomic deploy: git pull → build → restart services → health check → auto-rollback; params: target/repoPath/branch/buildCmd/services/healthCheck/rollbackOnFail
+- `ssh_rollback` — restore backup + restart services + health check; params: target/backupDir/backupFile/restoreTo/services/healthCheck
+- `ssh_rsync` — rsync local↔remote (runs locally); params: src/dst/exclude/delete/checksum/bwlimit/compress *(--delete needs confirm)*
+
+**Storage**
+- `ssh_lvm` — LVM: list/status/extend/create-snapshot/remove-snapshot/resize; params: target/action/vg/lv/size/snapshotName *(mutating CONFIRM)*
+
+**Fleet & AI-Native**
+- `ssh_fleet_health` — parallel health check across ALL profiles → summary table (server/status/cpu%/mem%/disk%/load/failed-services); params: group/timeoutMs
+- `ssh_anomaly` — compare current metrics to rolling baseline; flags deviations; stores history locally per target; params: target/updateBaseline/sensitivity(low|medium|high)
+- `ssh_change_tracker` — find files modified in last N minutes; params: target/minutes/path/exclude — good for post-deploy change verification
 
 **IP groups**
 - `ssh_save_ip_group` / `ssh_remove_ip_group` / `ssh_list_ip_groups`
