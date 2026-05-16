@@ -35,6 +35,11 @@ import {
   runSshCommand,
   serviceScript
 } from "./ssh-core.mjs";
+import * as _netTools from "./ssh-tools-network.mjs";
+import * as _obsTools from "./ssh-tools-observability.mjs";
+import * as _storeTools from "./ssh-tools-storage.mjs";
+import * as _advTools from "./ssh-tools-advanced.mjs";
+const _extraModules = [_netTools, _obsTools, _storeTools, _advTools];
 import https from "node:https";
 import net from "node:net";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -858,15 +863,34 @@ const allTools = [
       },
       required: ["action"]
     }
+  },
+  {
+    name: "ssh_run_watch",
+    title: "SSH Run Watch (Diff Output)",
+    description: "Run a command and return a diff vs the last time it ran. On first call returns full output. Subsequent calls return only changed lines (unified diff). Reduces context by surfacing only what changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Profile or user@host." },
+        command: { type: "string", description: "Remote command to run." },
+        sudo: { type: "boolean", description: "Run via sudo -n bash -s." },
+        mode: { type: "string", enum: ["bash", "raw"], description: "Execution mode. Default bash." },
+        cwd: { type: "string", description: "Remote working directory." },
+        timeoutMs: { type: "number", description: "Timeout ms." },
+        resetCache: { type: "boolean", description: "If true, discard cached output and return fresh full output." }
+      },
+      required: ["command"]
+    }
   }
 ];
 
 function getTools() {
+  const extra = _extraModules.flatMap(m => Array.isArray(m.toolDefs) ? m.toolDefs : []);
   try {
     const cfg = getConfig();
-    if (cfg.exposeProfiles === false) return allTools;
+    if (cfg.exposeProfiles === false) return [...allTools, ...extra];
   } catch {}
-  return [profilesTool, ...allTools];
+  return [profilesTool, ...allTools, ...extra];
 }
 
 function isTopologyExposed() {
@@ -1865,6 +1889,41 @@ printf '{"cpuPercent":%s,"memPercent":%s,"memUsedMB":%s,"memTotalMB":%s,"loadAvg
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
+  if (name === "ssh_run_watch") {
+    const validErr = validateInput(name, args);
+    if (validErr) return textResult(validErr, true);
+
+    const cacheKey = `${args.target || args.host || "__default__"}::${args.command}`;
+
+    if (args.resetCache === true) {
+      _watchCache.delete(cacheKey);
+    }
+
+    const result = await runSshCommand({ retries: 0, ...args });
+    const newOutput = formatRunResult(result);
+    const prev = _watchCache.get(cacheKey);
+    _watchCache.set(cacheKey, { output: newOutput, ts: new Date().toISOString() });
+
+    if (!prev) {
+      return textResult(`[watch] First run — full output:\n\n${newOutput}`, result.exitCode !== 0);
+    }
+
+    if (prev.output === newOutput) {
+      return textResult(`[watch] No change since ${prev.ts}`);
+    }
+
+    const diff = unifiedDiff(`previous (${prev.ts})`, `current`, prev.output, newOutput, 3);
+    return textResult(`[watch] Changed since ${prev.ts}:\n\n${diff || "(diff empty — whitespace only?)"}`, result.exitCode !== 0);
+  }
+
+  // Dispatch to extra tool modules
+  for (const mod of _extraModules) {
+    if (typeof mod.handleTool === "function") {
+      const r = await mod.handleTool(name, args);
+      if (r !== null && r !== undefined) return r;
+    }
+  }
+
   return textResult(`Unknown tool: ${name}`, true);
 }
 
@@ -1971,6 +2030,7 @@ function _flushLogShip() {
 }
 
 const _rateLimitWindows = new Map(); // target → timestamps[]
+const _watchCache = new Map(); // key: `${target}::${command}` -> { output: string, ts: string }
 
 function checkRateLimit(target, limitPerMin) {
   if (!limitPerMin || limitPerMin <= 0) return null;
