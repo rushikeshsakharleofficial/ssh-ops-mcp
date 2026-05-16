@@ -1256,87 +1256,213 @@ export function networkCheckScript({ host, port, ping = true, tls = false } = {}
   return parts.join("\n") + "\n";
 }
 
-export function packageScript({ action, packages = [], sudo = true } = {}) {
-  const validActions = ["list", "search", "install", "remove", "update", "upgrade"];
+export function packageScript({ action, packages = [], sudo = true, manager = null } = {}) {
+  const validActions = ["list", "search", "install", "remove", "update", "upgrade", "info", "autoremove"];
   if (!validActions.includes(action)) {
     throw new Error(`Invalid action: ${action}. Must be one of: ${validActions.join(", ")}`);
   }
-  if (["install", "remove", "search"].includes(action) && packages.length === 0) {
+  if (["install", "remove", "search", "info"].includes(action) && packages.length === 0) {
     throw new Error(`packages is required for ${action}.`);
   }
 
   const s = sudo ? "sudo -n " : "";
   const pkgs = packages.map((p) => shellQuote(String(p))).join(" ");
 
-  const detect = [
+  const managerClause = manager ? `_pm=${shellQuote(String(manager))}` : null;
+  const detect = managerClause ? [managerClause] : [
     `if command -v apt-get >/dev/null 2>&1; then _pm=apt`,
     `elif command -v dnf >/dev/null 2>&1; then _pm=dnf`,
     `elif command -v yum >/dev/null 2>&1; then _pm=yum`,
     `elif command -v apk >/dev/null 2>&1; then _pm=apk`,
-    `else echo "No supported package manager found (apt/dnf/yum/apk)"; exit 1`,
+    `elif command -v pacman >/dev/null 2>&1; then _pm=pacman`,
+    `elif command -v zypper >/dev/null 2>&1; then _pm=zypper`,
+    `elif command -v xbps-install >/dev/null 2>&1; then _pm=xbps`,
+    `elif command -v snap >/dev/null 2>&1; then _pm=snap`,
+    `elif command -v flatpak >/dev/null 2>&1; then _pm=flatpak`,
+    `elif command -v pkg >/dev/null 2>&1; then _pm=pkg`,
+    `elif command -v emerge >/dev/null 2>&1; then _pm=emerge`,
+    `elif command -v nix-env >/dev/null 2>&1; then _pm=nix`,
+    `elif command -v opkg >/dev/null 2>&1; then _pm=opkg`,
+    `elif command -v brew >/dev/null 2>&1; then _pm=brew`,
+    `else echo "No supported package manager found"; exit 1`,
     `fi`
   ];
 
   const dispatch = {
     list: [
       `case "$_pm" in`,
-      `  apt) ${s}dpkg -l ;;`,
-      `  dnf|yum) ${s}rpm -qa ;;`,
-      `  apk) ${s}apk list --installed ;;`,
+      `  apt)     ${s}dpkg -l ;;`,
+      `  dnf|yum) ${s}rpm -qa --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\\n' | sort ;;`,
+      `  apk)     apk list --installed ;;`,
+      `  pacman)  pacman -Q ;;`,
+      `  zypper)  zypper se --installed-only ;;`,
+      `  xbps)    xbps-query -l ;;`,
+      `  snap)    snap list ;;`,
+      `  flatpak) flatpak list ;;`,
+      `  pkg)     pkg info ;;`,
+      `  emerge)  qlist -I 2>/dev/null || emerge -ep @world ;;`,
+      `  nix)     nix-env -q ;;`,
+      `  opkg)    opkg list-installed ;;`,
+      `  brew)    brew list --versions ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
       `esac`
     ],
     search: [
       `case "$_pm" in`,
-      `  apt) apt-cache search ${pkgs} ;;`,
-      `  dnf) dnf search ${pkgs} ;;`,
-      `  yum) yum search ${pkgs} ;;`,
-      `  apk) apk search ${pkgs} ;;`,
+      `  apt)     apt-cache search ${pkgs} ;;`,
+      `  dnf)     dnf search ${pkgs} ;;`,
+      `  yum)     yum search ${pkgs} ;;`,
+      `  apk)     apk search ${pkgs} ;;`,
+      `  pacman)  pacman -Ss ${pkgs} ;;`,
+      `  zypper)  zypper se ${pkgs} ;;`,
+      `  xbps)    xbps-query -Rs ${pkgs} ;;`,
+      `  snap)    snap find ${pkgs} ;;`,
+      `  flatpak) flatpak search ${pkgs} ;;`,
+      `  pkg)     ${s}pkg search ${pkgs} ;;`,
+      `  emerge)  emerge -s ${pkgs} ;;`,
+      `  nix)     nix-env -qa \\*${pkgs}\\* 2>/dev/null || nix search ${pkgs} ;;`,
+      `  opkg)    opkg find ${pkgs} ;;`,
+      `  brew)    brew search ${pkgs} ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
+      `esac`
+    ],
+    info: [
+      `case "$_pm" in`,
+      `  apt)     apt-cache show ${pkgs} ;;`,
+      `  dnf)     dnf info ${pkgs} ;;`,
+      `  yum)     yum info ${pkgs} ;;`,
+      `  apk)     apk info -a ${pkgs} ;;`,
+      `  pacman)  pacman -Si ${pkgs} 2>/dev/null || pacman -Qi ${pkgs} ;;`,
+      `  zypper)  zypper info ${pkgs} ;;`,
+      `  xbps)    xbps-query -R ${pkgs} ;;`,
+      `  snap)    snap info ${pkgs} ;;`,
+      `  flatpak) flatpak info ${pkgs} ;;`,
+      `  pkg)     pkg info ${pkgs} ;;`,
+      `  emerge)  emerge -pv ${pkgs} ;;`,
+      `  nix)     nix-env -qa --description ${pkgs} ;;`,
+      `  opkg)    opkg info ${pkgs} ;;`,
+      `  brew)    brew info ${pkgs} ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
       `esac`
     ],
     install: [
       `case "$_pm" in`,
-      `  apt) ${s}apt-get install -y ${pkgs} ;;`,
-      `  dnf) ${s}dnf install -y ${pkgs} ;;`,
-      `  yum) ${s}yum install -y ${pkgs} ;;`,
-      `  apk) ${s}apk add ${pkgs} ;;`,
+      `  apt)     ${s}apt-get install -y ${pkgs} ;;`,
+      `  dnf)     ${s}dnf install -y ${pkgs} ;;`,
+      `  yum)     ${s}yum install -y ${pkgs} ;;`,
+      `  apk)     ${s}apk add ${pkgs} ;;`,
+      `  pacman)  ${s}pacman -S --noconfirm ${pkgs} ;;`,
+      `  zypper)  ${s}zypper install -y ${pkgs} ;;`,
+      `  xbps)    ${s}xbps-install -y ${pkgs} ;;`,
+      `  snap)    ${s}snap install ${pkgs} ;;`,
+      `  flatpak) ${s}flatpak install -y flathub ${pkgs} ;;`,
+      `  pkg)     ${s}pkg install -y ${pkgs} ;;`,
+      `  emerge)  ${s}emerge ${pkgs} ;;`,
+      `  nix)     nix-env -i ${pkgs} ;;`,
+      `  opkg)    ${s}opkg install ${pkgs} ;;`,
+      `  brew)    brew install ${pkgs} ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
       `esac`
     ],
     remove: [
       `case "$_pm" in`,
-      `  apt) ${s}apt-get remove -y ${pkgs} ;;`,
-      `  dnf) ${s}dnf remove -y ${pkgs} ;;`,
-      `  yum) ${s}yum remove -y ${pkgs} ;;`,
-      `  apk) ${s}apk del ${pkgs} ;;`,
+      `  apt)     ${s}apt-get remove -y ${pkgs} ;;`,
+      `  dnf)     ${s}dnf remove -y ${pkgs} ;;`,
+      `  yum)     ${s}yum remove -y ${pkgs} ;;`,
+      `  apk)     ${s}apk del ${pkgs} ;;`,
+      `  pacman)  ${s}pacman -R --noconfirm ${pkgs} ;;`,
+      `  zypper)  ${s}zypper remove -y ${pkgs} ;;`,
+      `  xbps)    ${s}xbps-remove -y ${pkgs} ;;`,
+      `  snap)    ${s}snap remove ${pkgs} ;;`,
+      `  flatpak) ${s}flatpak uninstall -y ${pkgs} ;;`,
+      `  pkg)     ${s}pkg remove -y ${pkgs} ;;`,
+      `  emerge)  ${s}emerge --unmerge ${pkgs} ;;`,
+      `  nix)     nix-env -e ${pkgs} ;;`,
+      `  opkg)    ${s}opkg remove ${pkgs} ;;`,
+      `  brew)    brew uninstall ${pkgs} ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
       `esac`
     ],
     update: packages.length > 0
       ? [
           `case "$_pm" in`,
-          `  apt) ${s}apt-get install --only-upgrade -y ${pkgs} ;;`,
-          `  dnf) ${s}dnf update -y ${pkgs} ;;`,
-          `  yum) ${s}yum update -y ${pkgs} ;;`,
-          `  apk) ${s}apk upgrade ${pkgs} ;;`,
+          `  apt)     ${s}apt-get install --only-upgrade -y ${pkgs} ;;`,
+          `  dnf)     ${s}dnf update -y ${pkgs} ;;`,
+          `  yum)     ${s}yum update -y ${pkgs} ;;`,
+          `  apk)     ${s}apk upgrade ${pkgs} ;;`,
+          `  pacman)  ${s}pacman -S --noconfirm ${pkgs} ;;`,
+          `  zypper)  ${s}zypper update -y ${pkgs} ;;`,
+          `  xbps)    ${s}xbps-install -Su ${pkgs} ;;`,
+          `  snap)    ${s}snap refresh ${pkgs} ;;`,
+          `  flatpak) ${s}flatpak update -y ${pkgs} ;;`,
+          `  pkg)     ${s}pkg upgrade -y ${pkgs} ;;`,
+          `  emerge)  ${s}emerge -u ${pkgs} ;;`,
+          `  nix)     nix-env -u ${pkgs} ;;`,
+          `  opkg)    ${s}opkg upgrade ${pkgs} ;;`,
+          `  brew)    brew upgrade ${pkgs} ;;`,
+          `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
           `esac`
         ]
       : [
           `case "$_pm" in`,
-          `  apt) ${s}apt-get update && ${s}apt-get upgrade -y ;;`,
-          `  dnf) ${s}dnf update -y ;;`,
-          `  yum) ${s}yum update -y ;;`,
-          `  apk) ${s}apk update && ${s}apk upgrade ;;`,
+          `  apt)     ${s}apt-get update && ${s}apt-get upgrade -y ;;`,
+          `  dnf)     ${s}dnf update -y ;;`,
+          `  yum)     ${s}yum update -y ;;`,
+          `  apk)     ${s}apk update && ${s}apk upgrade ;;`,
+          `  pacman)  ${s}pacman -Syu --noconfirm ;;`,
+          `  zypper)  ${s}zypper refresh && ${s}zypper update -y ;;`,
+          `  xbps)    ${s}xbps-install -Su ;;`,
+          `  snap)    ${s}snap refresh ;;`,
+          `  flatpak) ${s}flatpak update -y ;;`,
+          `  pkg)     ${s}pkg upgrade -y ;;`,
+          `  emerge)  ${s}emerge --sync && ${s}emerge -u @world ;;`,
+          `  nix)     nix-channel --update && nix-env -u '*' ;;`,
+          `  opkg)    ${s}opkg update && ${s}opkg upgrade ;;`,
+          `  brew)    brew update && brew upgrade ;;`,
+          `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
           `esac`
         ],
     upgrade: [
       `case "$_pm" in`,
-      `  apt) ${s}apt-get dist-upgrade -y ;;`,
-      `  dnf) ${s}dnf distro-sync -y ;;`,
-      `  yum) ${s}yum distro-sync -y 2>/dev/null || ${s}yum upgrade -y ;;`,
-      `  apk) ${s}apk upgrade --available ;;`,
+      `  apt)     ${s}apt-get update && ${s}apt-get dist-upgrade -y ;;`,
+      `  dnf)     ${s}dnf distro-sync -y ;;`,
+      `  yum)     ${s}yum distro-sync -y 2>/dev/null || ${s}yum upgrade -y ;;`,
+      `  apk)     ${s}apk upgrade --available ;;`,
+      `  pacman)  ${s}pacman -Su --noconfirm ;;`,
+      `  zypper)  ${s}zypper dist-upgrade -y ;;`,
+      `  xbps)    ${s}xbps-install -Su ;;`,
+      `  snap)    ${s}snap refresh ;;`,
+      `  flatpak) ${s}flatpak update -y ;;`,
+      `  pkg)     ${s}pkg upgrade -y ;;`,
+      `  emerge)  ${s}emerge -uDN @world ;;`,
+      `  nix)     nix-channel --update && nix-env -u '*' ;;`,
+      `  opkg)    ${s}opkg update && ${s}opkg upgrade ;;`,
+      `  brew)    brew update && brew upgrade ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
+      `esac`
+    ],
+    autoremove: [
+      `case "$_pm" in`,
+      `  apt)     ${s}apt-get autoremove -y ;;`,
+      `  dnf)     ${s}dnf autoremove -y ;;`,
+      `  yum)     ${s}yum autoremove -y 2>/dev/null || echo "autoremove not supported on this yum version" ;;`,
+      `  apk)     ${s}apk cache clean ;;`,
+      `  pacman)  ${s}pacman -Qdtq 2>/dev/null | ${s}pacman -Rs --noconfirm - 2>/dev/null || echo "No orphans to remove" ;;`,
+      `  zypper)  ${s}zypper packages --orphaned ;;`,
+      `  xbps)    ${s}xbps-remove -Oo ;;`,
+      `  snap)    ${s}snap list --all | awk '/disabled/{print $1, $3}' | while read name rev; do ${s}snap remove "$name" --revision="$rev"; done ;;`,
+      `  flatpak) ${s}flatpak uninstall --unused -y ;;`,
+      `  pkg)     ${s}pkg autoremove -y ;;`,
+      `  emerge)  ${s}emerge --depclean ;;`,
+      `  nix)     nix-collect-garbage -d ;;`,
+      `  opkg)    echo "autoremove not supported by opkg" ;;`,
+      `  brew)    brew autoremove ;;`,
+      `  *)       echo "Unknown package manager: $_pm" >&2; exit 1 ;;`,
       `esac`
     ]
   };
 
-  return ["set +e", "export LC_ALL=C", ...detect, ...dispatch[action]].join("\n") + "\n";
+  return ["set +e", "export LC_ALL=C", ...detect, `echo "Package manager: $_pm"`, ...dispatch[action]].join("\n") + "\n";
 }
 
 export function cronScript({ action, user, schedule, command: cronCommand } = {}) {

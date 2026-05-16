@@ -454,21 +454,23 @@ const allTools = [
   {
     name: "ssh_package",
     title: "SSH Package Management",
-    description: "Manage packages on a remote host. Auto-detects apt/yum/dnf/apk. CONFIRM before install/remove/update/upgrade unless told to proceed automatically.",
+    description: "Manage packages on a remote host. Auto-detects: apt, dnf, yum, apk, pacman, zypper, xbps, snap, flatpak, pkg (FreeBSD), emerge (Gentoo), nix-env, opkg, brew. CONFIRM before install/remove/update/upgrade/autoremove.",
     inputSchema: {
       type: "object",
       properties: {
         target: { type: "string", description: "Profile or user@host." },
         action: {
           type: "string",
-          enum: ["list", "search", "install", "remove", "update", "upgrade"],
-          description: "Package action."
+          enum: ["list", "search", "info", "install", "remove", "update", "upgrade", "autoremove"],
+          description: "list: installed packages. search: find packages. info: package details. install/remove: add or remove. update: refresh+upgrade specific or all. upgrade: full dist-upgrade equivalent. autoremove: remove unused deps."
         },
-        packages: { type: "array", items: { type: "string" }, description: "Package names." },
+        packages: { type: "array", items: { type: "string" }, description: "Package names. Required for install/remove/search/info." },
+        manager: { type: "string", description: "Force a specific package manager (apt/dnf/yum/apk/pacman/zypper/xbps/snap/flatpak/pkg/emerge/nix/opkg/brew). Skip auto-detection." },
         sudo: { type: "boolean", description: "Use sudo -n. Default true." },
         timeoutMs: { type: "number", description: "Timeout ms. Default 120000." },
-        confirm: { type: "boolean", description: "Required true for install/remove/update/upgrade." },
-        reason: { type: "string", description: "Optional reason for this action. Logged to audit log and shown in confirmation prompts." }
+        confirm: { type: "boolean", description: "Required true for install/remove/update/upgrade/autoremove." },
+        dryRun: { type: "boolean", description: "Preview command without executing." },
+        reason: { type: "string", description: "Optional reason. Logged to audit log." }
       },
       required: ["action"]
     }
@@ -1057,9 +1059,13 @@ function validateInput(toolName, params) {
   if (toolName === "ssh_package") {
     const entries = Array.isArray(params.packages) ? params.packages : (params.package ? [params.package] : []);
     for (const pkg of entries) {
-      if (!/^[a-zA-Z0-9._+:-]+$/.test(pkg) || pkg.startsWith("-")) {
-        return `package name is invalid or starts with a dash. Use only [a-zA-Z0-9._+:-]. Got: ${pkg}`;
+      if (!/^[a-zA-Z0-9._+:/-]+$/.test(pkg) || pkg.startsWith("-")) {
+        return `package name is invalid or starts with a dash. Use only [a-zA-Z0-9._+:/-]. Got: ${pkg}`;
       }
+    }
+    const validManagers = ["apt","dnf","yum","apk","pacman","zypper","xbps","snap","flatpak","pkg","emerge","nix","opkg","brew"];
+    if (params.manager !== undefined && !validManagers.includes(String(params.manager))) {
+      return `manager must be one of: ${validManagers.join(", ")}. Got: ${params.manager}`;
     }
   }
 
@@ -1352,14 +1358,15 @@ async function callTool(name, args) {
   if (name === "ssh_package") {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
-    const mutatingActions = { install: true, remove: true, update: true, upgrade: true };
+    const mutatingActions = { install: true, remove: true, update: true, upgrade: true, autoremove: true };
     if (mutatingActions[args.action] && args.confirm !== true) {
       return requireConfirm(name, args);
     }
     const command = packageScript({
       action: args.action,
       packages: Array.isArray(args.packages) ? args.packages : [],
-      sudo: args.sudo !== false
+      sudo: args.sudo !== false,
+      manager: args.manager || null
     });
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
