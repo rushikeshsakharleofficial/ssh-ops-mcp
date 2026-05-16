@@ -252,81 +252,180 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 
 ## MCP Tools
 
-### Diagnostics (read-only)
+**95 tools total.** `target` accepts a profile name or raw `user@host`. Full parameter reference: [[MCP-Tools wiki](https://github.com/rushikeshsakharleofficial/ssh-ops-mcp/wiki/MCP-Tools)].
+
+### Exec
 
 | Tool | Description |
 |------|-------------|
-| `ssh_profiles` | List configured profiles without connecting |
-| `ssh_inventory` | Hardware and VM inventory — OS, CPU, RAM, disk, PCI, network |
-| `ssh_disk_report` | Filesystem, inode, and container storage report |
-| `ssh_health_report` | Load, services, journal errors, processes, Docker snapshot |
-| `ssh_log_search` | Search systemd journal or a log file by pattern |
-| `ssh_network_check` | Ping, port probe, TLS cert check — runs FROM the SSH server to another host |
+| `ssh_run` | Single host; params: command/target/sudo/mode/cwd/jumpHost/sshOptions |
+| `ssh_run_multi` | Parallel multi-host; `group:"prod"` targets all matching profiles; `format:"json"` |
+| `ssh_run_watch` | Run + diff vs last output; first call full, subsequent = changed lines only *(saves AI context)* |
+| `ssh_script` | Upload + run local script file on remote |
 
-### Execution
+### Inventory & Health
 
 | Tool | Description |
 |------|-------------|
-| `ssh_run` | Run a command or script on a single remote host; params: `retries` (default 2), `retryDelayMs` (default 1500) |
-| `ssh_run_multi` | Run a command on multiple hosts in parallel; returns per-target results as text or JSON; params: `maxConcurrent` (default 10), `retries` (default 2), `retryDelayMs` (default 1500) |
+| `ssh_inventory` | OS/CPU/RAM/DMI/disks/PCI/network/load |
+| `ssh_health_report` | Load/memory/disk/failed units/processes/docker; fires alertWebhook on threshold breach |
+| `ssh_disk_report` | df/inode/du/Docker storage hints |
+| `ssh_metrics` | Structured /proc metrics: cpuPercent/memPercent/memUsedMB/loadAvg/uptimeSeconds/diskIO/netIO |
+| `ssh_memory_report` | Detailed memory: totals/swap/huge pages/top-N processes by RSS |
+| `ssh_snapshot` | Full server state JSON (OS/CPU/mem/disk/load/services/ports/users/packages/top procs) |
+| `ssh_compare` | Parallel snapshots of two servers → diff report |
+| `ssh_fleet_health` | Health check ALL profiles in parallel → summary table (server/cpu%/mem%/disk%/load/failed) |
+| `ssh_anomaly` | Rolling 10-sample baseline + stddev deviation detection; params: sensitivity/updateBaseline |
+| `ssh_ping` | TCP reachability (no SSH auth); returns reachable/avgLatencyMs |
+| `ssh_diff` | Compare remote file vs local or remote-vs-remote |
 
-### File Operations
-
-| Tool | Description |
-|------|-------------|
-| `ssh_file_read` | Read a remote file (`encoding: "base64"` for binary) |
-| `ssh_file_write` | Overwrite a remote file; auto-backup before write |
-| `ssh_file_patch` | Edit a remote file — replace a line range or regex find-and-replace |
-
-### System Management *(confirm before write actions)*
-
-| Tool | Description |
-|------|-------------|
-| `ssh_service` | Systemd service control — status, start, stop, restart, enable, disable |
-| `ssh_package` | Package management — auto-detects apt/yum/dnf/apk; list, search, install, remove, update, upgrade |
-| `ssh_cron` | Crontab CRUD for any user — list, add, remove |
-| `ssh_ip_assign` | Assign IPs to an interface permanently; accepts inline array, saved group, or local file |
-| `ssh_user` | User management — add/del/mod/list/info/passwd/lock/unlock; groups, shell, home, system accounts |
-| `ssh_chmod` | chmod + chown + chgrp in one call; optional recursive |
-| `ssh_sudo_rule` | Sudoers management via `/etc/sudoers.d/`; validates with `visudo -c`; specific commands, NOPASSWD toggle |
-
-### IP Group Management
+### Files *(CONFIRM writes)*
 
 | Tool | Description |
 |------|-------------|
-| `ssh_save_ip_group` | Save a named IP set (ips, iface, gateway, dns) for reuse across servers |
-| `ssh_remove_ip_group` | Remove a saved IP group |
-| `ssh_list_ip_groups` | List all saved IP groups |
+| `ssh_file_read` | `encoding:"base64"` for binary |
+| `ssh_file_write` | Auto-backup; `sudo` for root files *(CONFIRM)* |
+| `ssh_file_patch` | Line-range or regex replace *(CONFIRM)* |
+| `ssh_tail` | Last N lines; optional `followSeconds` live tail |
+| `ssh_template` | Render `{{VAR}}` template → write to remote path *(CONFIRM)* |
+| `ssh_transfer` | scp local↔remote or remote↔remote *(CONFIRM)* |
+| `ssh_rsync` | rsync (runs locally); `--delete` requires confirm |
 
-### Profile Management
-
-| Tool | Description |
-|------|-------------|
-| `ssh_add_profile` | Add or update an SSH profile at runtime; passwords AES-256-GCM encrypted; supports `localSwitchUser` for bastion-local execution |
-| `ssh_remove_profile` | Remove a dynamically-added profile |
-| `ssh_list_keys` | List SSH private key files in `~/.ssh/` and home directory |
-
-### Jump Server Management
+### Logs & Observability
 
 | Tool | Description |
 |------|-------------|
-| `ssh_add_jump` | Add a jump/bastion server; appends to SSH `-J` chain; optional `commonUser` |
-| `ssh_remove_jump` | Remove a jump server and prune it from the chain |
-| `ssh_list_jumps` | Show current jump chain, all jump servers, and `commonUser` |
+| `ssh_log_search` | Journal or file grep; params: unit/pattern/lines/since/path |
+| `ssh_dmesg` | Kernel ring buffer; levels: all/emerg/alert/crit/err/warn/notice/info/debug |
+| `ssh_perf` | vmstat+iostat+/proc network delta |
+| `ssh_tcpdump` | Bounded capture (max 200 packets / 30s) *(CONFIRM)* |
+| `ssh_change_tracker` | `find -mmin -N` recently modified files; params: minutes/path/exclude |
+
+### System *(CONFIRM writes)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_service` | status/start/stop/restart/enable/disable *(non-status CONFIRM)* |
+| `ssh_package` | 14 managers auto-detected: apt/dnf/yum/apk/pacman/zypper/xbps/snap/flatpak/pkg/emerge/nix/opkg/brew; list/search/info/install/remove/update/upgrade/autoremove |
+| `ssh_cron` | list/add/remove crontab for any user *(add/remove CONFIRM)* |
+| `ssh_systemd_timer` | list/status/enable/disable/start/stop systemd timers *(mutating CONFIRM)* |
+| `ssh_user` | add/del/mod/list/info/passwd/lock/unlock *(mutating CONFIRM)* |
+| `ssh_chmod` | chmod+chown+chgrp; mode/owner/group/recursive *(CONFIRM)* |
+| `ssh_sudo_rule` | /etc/sudoers.d/; visudo -c validation *(mutating CONFIRM)* |
+| `ssh_env` | /etc/environment list/get/set/unset *(set/unset CONFIRM)* |
+| `ssh_process` | list or kill by PID/name; signal param *(kill CONFIRM)* |
+| `ssh_mount` | list(findmnt)/mount/umount filesystems *(mount/umount CONFIRM)* |
+| `ssh_sysctl` | list/get/set/search kernel params; `persist:true` → /etc/sysctl.d/ *(set CONFIRM)* |
+| `ssh_swap` | status/add/remove/on/off swap files *(mutating CONFIRM)* |
+| `ssh_kernel` | version/modules/dmesg/params (read-only) |
+| `ssh_limits` | /etc/security/limits.conf list/get/set/remove/current *(set/remove CONFIRM)* |
+
+### Networking
+
+| Tool | Description |
+|------|-------------|
+| `ssh_network_check` | ping/port/TLS FROM remote server |
+| `ssh_port_scan` | Listening ports via ss (netstat fallback) |
+| `ssh_ssl_cert` | TLS cert expiry+subject+SANs+fingerprint (openssl from remote) |
+| `ssh_firewall` | ufw/firewalld/iptables auto-detect; list/add/remove/flush *(add/remove/flush CONFIRM)* |
+| `ssh_dns_check` | DNS resolution FROM remote (dig→nslookup→host) |
+| `ssh_traceroute` | mtr/tracepath/traceroute from remote |
+| `ssh_hosts` | /etc/hosts list/add/remove with auto-backup *(add/remove CONFIRM)* |
+| `ssh_ip_assign` | Permanent IP; auto-detects netplan/NM/network-scripts/networkd/rc.local *(CONFIRM)* |
+| `ssh_wireguard` | WireGuard VPN: status/list-peers/add-peer/remove-peer/enable/disable/stats *(mutating CONFIRM)* |
+| `ssh_nfs` | NFS exports: list/clients/add/remove/reload *(mutating CONFIRM)* |
+
+### Security *(mutations CONFIRM)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_authorized_keys` | list/add/remove ~/.ssh/authorized_keys; validates key format *(add/remove CONFIRM)* |
+| `ssh_fail2ban` | status/list-jails/banned-ips/ban/unban/reload *(ban/unban/reload CONFIRM)* |
+| `ssh_audit` | Read-only scan: SUID/SGID, world-writable, passwordless sudo, SSH config weaknesses, 0.0.0.0 listeners |
+| `ssh_intrusion_check` | Parse auth logs: brute force IPs, root logins, new UIDs; params: hours (1-168) |
+| `ssh_certbot` | Let's Encrypt: list/renew/renew-all/status/expand/delete; `dryRun:true` *(mutating CONFIRM)* |
+
+### Containers *(CONFIRM mutating)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_compose` | docker-compose v2/v1 auto-detect; up/down/ps/logs/pull/build/restart/stop/config/exec *(mutating CONFIRM)* |
+| `ssh_docker` | list/logs/restart/stop/start/inspect/stats *(restart/stop/start CONFIRM)* |
+| `ssh_k8s` | kubectl: get/describe/logs/exec/apply/delete/rollout/scale/top/events *(apply/delete/scale CONFIRM)* |
+
+### Databases *(write queries CONFIRM)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_db` | MySQL/PostgreSQL/Redis/MongoDB/SQLite auto-detect; query/list-dbs/list-tables/stats/ping/slow-queries; write keywords require confirm; query via env var (injection-safe) |
+
+### Web Servers *(CONFIRM reload/restart/enable/disable)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_nginx` | test/reload/restart/status/list-sites/enable/disable/logs/show-config |
+| `ssh_apache` | test/reload/restart/status/list-sites/enable-site/disable-site/list-mods/enable-mod/disable-mod/logs |
+
+### Storage
+
+| Tool | Description |
+|------|-------------|
+| `ssh_backup` | tar.gz create/list/restore/prune with rotation *(create/restore/prune CONFIRM)* |
+| `ssh_lvm` | pvs/vgs/lvs list/status/extend/create-snapshot/remove-snapshot/resize *(mutating CONFIRM)* |
+| `ssh_zfs` | ZFS pools and datasets: list/list-pools/create/destroy/snapshot/rollback/scrub/status/get/set *(mutating CONFIRM)* |
+
+### Performance & Benchmarks
+
+| Tool | Description |
+|------|-------------|
+| `ssh_benchmark` | Disk (dd/fio), CPU (prime sieve/sysbench), network (iperf3); falls back when tools missing |
+| `ssh_port_forward` | Persistent tunnels via systemd+socat: list/create/kill *(create/kill CONFIRM)* |
+
+### Windows Tools *(PowerShell, auto-routed on Windows targets)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_win_inventory` | OS/CPU/RAM/disks/NICs via CIM/WMI (read-only) |
+| `ssh_win_health` | CPU%/mem%/disk/stopped services/recent errors (read-only) |
+| `ssh_win_disk` | Get-PSDrive/Get-Volume/Get-PhysicalDisk (read-only) |
+| `ssh_win_metrics` | Structured JSON metrics: cpuPercent/memPercent/uptimeSeconds/processCount (read-only) |
+| `ssh_win_service` | list/status/start/stop/restart/enable/disable *(mutating CONFIRM)* |
+| `ssh_win_process` | list (top 50 by CPU) / kill by PID or name *(kill CONFIRM)* |
+| `ssh_win_user` | list/info/add/remove/passwd/lock/unlock local users *(mutating CONFIRM)* |
+| `ssh_win_eventlog` | Get-WinEvent with level filter (error/warning/info/all) |
+| `ssh_win_schtask` | list/status/register/unregister/run scheduled tasks *(mutating CONFIRM)* |
+| `ssh_win_firewall` | list/add/remove firewall rules *(mutating CONFIRM)* |
+| `ssh_win_ip_assign` | list/set static IPv4 address *(set CONFIRM)* |
+| `ssh_win_acl` | list/set file ACLs *(set CONFIRM)* |
+| `ssh_win_reg` | list/get/set/delete registry values; path must start with HKLM:/HKCU:/etc. *(set/delete CONFIRM)* |
+| `ssh_win_wsl` | WSL distributions: list/status/start/stop/set-default/run *(mutating CONFIRM)* |
+| `ssh_win_iis` | IIS sites and app pools: list-sites/list-pools/start/stop/restart/status/bindings *(mutating CONFIRM)* |
+
+### Deployment *(CONFIRM)*
+
+| Tool | Description |
+|------|-------------|
+| `ssh_git` | git ops on remote repo: status/pull/fetch/log/checkout/diff *(pull/checkout CONFIRM)* |
+| `ssh_deploy` | Atomic: git pull → buildCmd → restart services → health check → auto-rollback on fail |
+| `ssh_rollback` | Restore latest/named backup + restart services + health check |
+| `ssh_rsync` | Local rsync; params: src/dst/exclude/delete/checksum/bwlimit *(--delete CONFIRM)* |
+
+### Profile & Infrastructure Management
+
+| Tool | Description |
+|------|-------------|
+| `ssh_profiles` | List all profiles (no connection made) |
+| `ssh_add_profile` | Add/update profile; `shell:"bash|powershell|auto"` *(CONFIRM)* |
+| `ssh_remove_profile` | Remove a profile *(CONFIRM)* |
+| `ssh_list_keys` | List available SSH keys |
+| `ssh_add_jump` | Add jump/bastion server *(CONFIRM)* |
+| `ssh_remove_jump` | Remove jump server *(CONFIRM)* |
+| `ssh_list_jumps` | List configured jump servers |
+| `ssh_save_ip_group` | Save named IP group |
+| `ssh_remove_ip_group` | Remove IP group |
+| `ssh_list_ip_groups` | List all IP groups |
 
 The MCP server communicates over newline-delimited JSON-RPC on stdio.
-
-### Read-only vs Mutating Tools
-
-| Category | Read-only | Mutating |
-|----------|-----------|---------|
-| Files | `ssh_file_read` | `ssh_file_write`, `ssh_file_patch` |
-| System | `ssh_health_report`, `ssh_disk_report`, `ssh_inventory` | `ssh_service`, `ssh_package`, `ssh_ip_assign` |
-| Users | `ssh_user` list/info | `ssh_user` add/del/mod/passwd/lock/unlock, `ssh_chmod`, `ssh_sudo_rule` |
-| Cron | `ssh_cron` list | `ssh_cron` add/remove |
-| Config | `ssh_profiles`, `ssh_list_jumps`, `ssh_list_ip_groups`, `ssh_list_keys` | `ssh_add_profile`, `ssh_remove_profile`, `ssh_add_jump`, `ssh_remove_jump`, `ssh_save_ip_group`, `ssh_remove_ip_group` |
-| Exec | `ssh_run` (read-only commands), `ssh_run_multi` | `ssh_run` (mutating commands), `ssh_network_check` |
-| Logs | `ssh_log_search` | — |
 
 ---
 

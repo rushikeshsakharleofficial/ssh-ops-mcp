@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [v1.21.0] — 2026-05-16
+
+### Added
+- **`ssh_wireguard`** — WireGuard VPN management: status/list-peers/add-peer/remove-peer/enable/disable/stats; validates public keys (44-char base64), CIDR notation, interface names; peers persisted to `/etc/wireguard/<iface>.conf`
+- **`ssh_nfs`** — NFS export management: list/clients/add/remove/reload; auto-reloads `exportfs -ra`; validates paths and options; auto-backup on remove
+- **`ssh_zfs`** — ZFS pool and dataset management: list/list-pools/create/destroy/snapshot/rollback/scrub/status/get/set; validates dataset names and property values
+- **`ssh_benchmark`** — performance benchmarks: disk I/O (dd + fio if available), CPU (prime sieve + sysbench if available), network (iperf3); falls back gracefully; `tests:["disk","cpu","network","all"]`
+- **`ssh_port_forward`** — persistent port-forward tunnels via systemd+socat services: list/create/kill; validates port ranges; auto-enables on boot
+- **`ssh_win_wsl`** — WSL distribution management (Windows): list/status/start/stop/set-default/run; runs commands inside WSL distributions
+- **`ssh_win_iis`** — IIS site and app pool management (Windows): list-sites/list-pools/start/stop/restart/status/bindings
+- **GitHub Actions CI** — `ci.yml`: Node 18/20/22 matrix, runs `node --test` + `node --check` on push/PR; `release.yml`: tag push → tests → VERSION update
+- **Windows `ssh_env`** — `set/unset` actions route to `[System.Environment]::SetEnvironmentVariable` on Windows targets; `list/get` use PowerShell `Get-Item Env:`
+
+### Tests
+- 11 new unit tests: `psQuote`, `packageScriptWindows` (all actions + manager override + invalid), `fileReadScriptWindows` (text/base64), `fileWriteScriptWindows` (backup/no-backup/base64)
+- **84 total tests** (was 73)
+
+### Total: 95 tools (was 88)
+
+---
+
 ## [v1.20.0] — 2026-05-16
 
 ### Added
