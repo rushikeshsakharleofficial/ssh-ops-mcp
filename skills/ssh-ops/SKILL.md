@@ -1,11 +1,30 @@
 ---
 name: ssh-ops
-description: SSH Ops MCP — 75 tools for remote SSH ops across Linux, BSD, macOS. Covers: exec, inventory, health, files, services, packages (14 managers), cron, timers, users, docker, compose, kubernetes, databases (5 engines), nginx, apache, firewall, TLS/certs/certbot, port scan, fail2ban, security audit, intrusion detection, authorized_keys, LVM, sysctl, swap, kernel, ulimits, rsync, atomic deploy, rollback, fleet health, anomaly detection, change tracking, perf, dmesg, tcpdump, DNS, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server diff, output diff watching, IP groups, jump servers, process management, env vars.
+description: SSH Ops MCP — 88 tools for remote SSH ops across Linux, BSD, macOS, and Windows. Covers: exec, inventory, health, files, services, packages (14 managers), cron, timers, users, docker, compose, kubernetes, databases (5 engines), nginx, apache, firewall, TLS/certs/certbot, port scan, fail2ban, security audit, intrusion detection, authorized_keys, LVM, sysctl, swap, kernel, ulimits, rsync, atomic deploy, rollback, fleet health, anomaly detection, change tracking, perf, dmesg, tcpdump, DNS, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server diff, output diff watching, IP groups, jump servers, process management, env vars.
 ---
 
 # SSH Ops — 75 Tools
 
 Target = profile name OR `user@host`. All tools accept `target:` param.
+
+---
+
+## Windows Support
+
+Windows SSH (OpenSSH for Windows, built-in since Windows 10 1809 / Server 2019) is fully supported.
+
+**Auto-detection:** On first connect to any target, ssh-ops probes the OS (`uname || ver`). If Windows is detected, all commands automatically route to PowerShell. Cached per session (one probe).
+
+**Manual override:** Set `shell:"powershell"` on the profile to skip auto-detection:
+```
+ssh_add_profile(name="winbox", host="192.168.1.100", user="Administrator", shell="powershell")
+```
+
+**Mode param:** `ssh_run` accepts `mode:"powershell"` to force PowerShell for a single call.
+
+**Linux-only tools on Windows:** `ssh_inventory`, `ssh_service`, `ssh_health_report`, `ssh_disk_report`, `ssh_metrics`, `ssh_process`, `ssh_log_search`, `ssh_cron`, `ssh_user`, `ssh_chmod`, `ssh_sudo_rule`, `ssh_ip_assign` — these return a clear error with the Windows equivalent to use.
+
+**`ssh_package` and `ssh_file_*` are cross-platform** — auto-route to PowerShell scripts on Windows (winget/choco/scoop for packages; `Get-Content`/`Set-Content` for files).
 
 ---
 
@@ -138,6 +157,21 @@ Target = profile name OR `user@host`. All tools accept `target:` param.
 ### Storage
 - `ssh_backup` — tar.gz create/list/restore/prune with rotation; params: target/action/source/dest/maxCount *(create/restore/prune CONFIRM)*
 - `ssh_lvm` — pvs/vgs/lvs list/status/extend/create-snapshot/remove-snapshot/resize; params: target/action/vg/lv/size/snapshotName *(mutating CONFIRM)*
+
+### Windows Tools (PowerShell, auto-routed on Windows targets)
+- `ssh_win_inventory` — OS/CPU/RAM/disks/NICs via CIM/WMI; read-only
+- `ssh_win_health` — CPU%/mem%/disk/stopped-services/recent-errors; read-only
+- `ssh_win_disk` — Get-PSDrive/Get-Volume/Get-PhysicalDisk; read-only
+- `ssh_win_metrics` — structured JSON metrics (cpuPercent/memPercent/uptimeSeconds/processCount); read-only
+- `ssh_win_service` — list/status/start/stop/restart/enable/disable; params: target/action/service *(mutating CONFIRM)*
+- `ssh_win_process` — list (top 50 by CPU)/kill by PID or name; params: target/action/pid/processName *(kill CONFIRM)*
+- `ssh_win_user` — list/info/add/remove/passwd/lock/unlock local users; params: target/action/username/password/groups *(mutating CONFIRM)*
+- `ssh_win_eventlog` — Get-WinEvent with level filter (error/warning/info/all); params: target/logName/level/hours/maxEvents
+- `ssh_win_schtask` — list/status/register/unregister/run scheduled tasks; params: target/action/taskName *(mutating CONFIRM)*
+- `ssh_win_firewall` — list/add/remove firewall rules; params: target/action/ruleName/direction/protocol/localPort *(mutating CONFIRM)*
+- `ssh_win_ip_assign` — list/set static IPv4 address; params: target/action/interfaceAlias/ipAddress/prefixLength/gateway *(set CONFIRM)*
+- `ssh_win_acl` — list/set file ACLs; params: target/action/path/identity/rights *(set CONFIRM)*
+- `ssh_win_reg` — list/get/set/delete registry values; path must start with HKLM:/HKCU:/etc.; params: target/action/path/name/value/type *(set/delete CONFIRM)*
 
 ### Deployment *(CONFIRM)*
 - `ssh_git` — git ops on remote repo: status/pull/fetch/log/checkout/diff; params: target/action/repoPath/branch *(pull/checkout CONFIRM)*

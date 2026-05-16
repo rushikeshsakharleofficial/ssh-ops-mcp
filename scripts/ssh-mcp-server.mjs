@@ -33,7 +33,12 @@ import {
   removeProfile,
   runMultiSshCommand,
   runSshCommand,
-  serviceScript
+  serviceScript,
+  detectRemoteOs,
+  packageScriptWindows,
+  fileReadScriptWindows,
+  fileWriteScriptWindows,
+  filePatchScriptWindows
 } from "./ssh-core.mjs";
 import * as _netTools from "./ssh-tools-network.mjs";
 import * as _obsTools from "./ssh-tools-observability.mjs";
@@ -50,10 +55,12 @@ import * as _deploy2Tools from "./ssh-tools-deploy2.mjs";
 import * as _storage2Tools from "./ssh-tools-storage2.mjs";
 import * as _certbotTools from "./ssh-tools-certbot.mjs";
 import * as _fleetTools from "./ssh-tools-fleet.mjs";
+import * as _windowsTools from "./ssh-tools-windows.mjs";
 const _extraModules = [
   _netTools, _obsTools, _storeTools, _advTools, _sec2Tools,
   _containersTools, _dbTools, _webTools, _sys2Tools, _netutilsTools,
-  _perfTools, _deploy2Tools, _storage2Tools, _certbotTools, _fleetTools
+  _perfTools, _deploy2Tools, _storage2Tools, _certbotTools, _fleetTools,
+  _windowsTools
 ];
 import https from "node:https";
 import net from "node:net";
@@ -197,8 +204,8 @@ const allTools = [
         },
         mode: {
           type: "string",
-          enum: ["bash", "raw"],
-          description: "bash pipes the command to bash -s. raw passes the command as the SSH remote command."
+          enum: ["bash", "raw", "powershell"],
+          description: "bash pipes script to bash -s. raw passes as SSH argv. powershell pipes to powershell -Command - (Windows). Omit to auto-detect from profile shell or OS."
         },
         timeoutMs: {
           type: "number",
@@ -526,7 +533,8 @@ const allTools = [
         jumpUser: { type: "string", description: "User to switch to on the jump server (via sudo -n -u) before running the destination SSH. Use when keys for this target live on the jump server under a different user." },
         targetUser: { type: "string", description: "Override the destination SSH username when routing through a jumpProfile." },
         localSwitchUser: { type: "string", description: "Switch to this local user (via sudo -n -u) before running SSH. Use when ssh-ops is running on a jump/bastion server and internal targets require a different local user for key access." },
-        extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." }
+        extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." },
+        shell: { type: "string", enum: ["bash", "powershell", "auto"], description: "Remote shell. auto (default) probes on first connect. Use powershell for Windows targets." }
       },
       required: ["name", "host"]
     }
@@ -1021,10 +1029,44 @@ function validateSshOptions(opts) {
 }
 
 function validateInput(toolName, params) {
-  // Global: reject control characters in all string params
+  // Global: reject control characters + PowerShell-dangerous chars in all string params
   for (const [k, v] of Object.entries(params)) {
-    if (typeof v === "string" && /[\r\n\x00]/.test(v)) {
-      return `Parameter "${k}" must not contain newlines or null bytes.`;
+    if (typeof v === "string" && /[\r\n\x00`]/.test(v)) {
+      return `Parameter "${k}" must not contain newlines, null bytes, or backticks.`;
+    }
+    if (typeof v === "string" && v.includes("--%")) {
+      return `Parameter "${k}" must not contain PowerShell stop-parsing token "--%".`;
+    }
+  }
+
+  // ssh_add_profile: validate shell field
+  if (toolName === "ssh_add_profile" && params.shell !== undefined) {
+    if (!["bash", "powershell", "auto"].includes(String(params.shell))) {
+      return `shell must be one of: bash, powershell, auto. Got: ${params.shell}`;
+    }
+  }
+
+  // ssh_win_user: Windows SAM username
+  if (toolName === "ssh_win_user" && params.username !== undefined && params.action !== "list") {
+    if (!/^[A-Za-z][A-Za-z0-9_.@-]{0,19}$/.test(params.username) || /[\\/:*?"<>|]/.test(params.username)) {
+      return `username must be 1-20 alphanumeric chars, no \\/:*?"<>|. Got: ${params.username}`;
+    }
+  }
+
+  // ssh_win_reg: registry path must start with valid hive
+  if (toolName === "ssh_win_reg" && params.path !== undefined) {
+    if (!/^HK(LM|CU|CR|U|CC):/.test(params.path)) {
+      return `registry path must start with a valid hive (HKLM:, HKCU:, HKCR:, HKU:, HKCC:). Got: ${params.path}`;
+    }
+    if (params.path.includes("..") || /[\r\n\x00]/.test(params.path)) {
+      return `registry path must not contain ".." or control characters.`;
+    }
+  }
+
+  // ssh_win_firewall: rule name security
+  if (toolName === "ssh_win_firewall" && params.ruleName !== undefined) {
+    if (/[;&|><]/.test(params.ruleName)) {
+      return `ruleName must not contain shell metacharacters (; & | > <). Got: ${params.ruleName}`;
     }
   }
 
@@ -1078,7 +1120,7 @@ function validateInput(toolName, params) {
         return `package name is invalid or starts with a dash. Use only [a-zA-Z0-9._+:/-]. Got: ${pkg}`;
       }
     }
-    const validManagers = ["apt","dnf","yum","apk","pacman","zypper","xbps","snap","flatpak","pkg","emerge","nix","opkg","brew"];
+    const validManagers = ["apt","dnf","yum","apk","pacman","zypper","xbps","snap","flatpak","pkg","emerge","nix","opkg","brew","winget","choco","scoop"];
     if (params.manager !== undefined && !validManagers.includes(String(params.manager))) {
       return `manager must be one of: ${validManagers.join(", ")}. Got: ${params.manager}`;
     }
@@ -1142,6 +1184,21 @@ function validateInput(toolName, params) {
   return null;
 }
 
+const WINDOWS_ALTERNATIVES = {
+  ssh_inventory:    "ssh_win_inventory",
+  ssh_disk_report:  "ssh_win_disk",
+  ssh_health_report:"ssh_win_health",
+  ssh_service:      "ssh_win_service",
+  ssh_log_search:   "ssh_win_eventlog",
+  ssh_metrics:      "ssh_win_metrics",
+  ssh_process:      "ssh_win_process",
+  ssh_cron:         "ssh_win_schtask",
+  ssh_user:         "ssh_win_user",
+  ssh_chmod:        "ssh_win_acl",
+  ssh_sudo_rule:    "(not applicable on Windows — manage Administrators group via ssh_win_user)",
+  ssh_ip_assign:    "ssh_win_ip_assign"
+};
+
 async function callTool(name, args) {
   // Enforce tool visibility: reject tools hidden from tools/list
   const visibleToolNames = new Set(getTools().map(t => t.name));
@@ -1201,12 +1258,16 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_inventory") {
+    const _os = await detectRemoteOs(args);
+    if (_os === "windows") return textResult(`ssh_inventory is Linux-only. Use ssh_win_inventory instead.`, true);
     const command = hardwareInventoryScript({ includeSudo: args.includeSudo !== false });
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 180_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   if (name === "ssh_disk_report") {
+    const _os = await detectRemoteOs(args);
+    if (_os === "windows") return textResult(`ssh_disk_report is Linux-only. Use ssh_win_disk instead.`, true);
     const command = diskReportScript({ path: args.path || "/", depth: args.depth || 1 });
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 180_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
@@ -1248,8 +1309,11 @@ async function callTool(name, args) {
   if (name === "ssh_file_read") {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
-    const command = fileReadScript(args.path, args.maxBytes, args.encoding);
-    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    const _fileOs = await detectRemoteOs(args);
+    const command = _fileOs === "windows"
+      ? fileReadScriptWindows(args.path, args.maxBytes, args.encoding)
+      : fileReadScript(args.path, args.maxBytes, args.encoding);
+    const result = await runSshCommand({ ...args, command, mode: _fileOs === "windows" ? "powershell" : "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
@@ -1259,17 +1323,18 @@ async function callTool(name, args) {
     if (args.confirm !== true) {
       return requireConfirm(name, args);
     }
-    const command = fileWriteScript(args.path, args.content, {
-      backup: args.backup !== false,
-      sudo: Boolean(args.sudo),
-      encoding: args.encoding
-    });
+    const _fileOs = await detectRemoteOs(args);
+    const command = _fileOs === "windows"
+      ? fileWriteScriptWindows(args.path, args.content, { backup: args.backup !== false, encoding: args.encoding })
+      : fileWriteScript(args.path, args.content, { backup: args.backup !== false, sudo: Boolean(args.sudo), encoding: args.encoding });
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
-    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    const result = await runSshCommand({ ...args, command, mode: _fileOs === "windows" ? "powershell" : "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
   if (name === "ssh_service") {
+    const _os = await detectRemoteOs(args);
+    if (_os === "windows") return textResult(`ssh_service is Linux-only (systemd). Use ssh_win_service instead.`, true);
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
     const mutatingActions = { start: true, stop: true, restart: true, enable: true, disable: true };
@@ -1285,6 +1350,8 @@ async function callTool(name, args) {
   }
 
   if (name === "ssh_log_search") {
+    const _os = await detectRemoteOs(args);
+    if (_os === "windows") return textResult(`ssh_log_search is Linux-only (journald). Use ssh_win_eventlog instead.`, true);
     const command = logSearchScript(args);
     const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 60_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
@@ -1296,18 +1363,19 @@ async function callTool(name, args) {
     if (args.confirm !== true) {
       return requireConfirm(name, args);
     }
-    const command = filePatchScript(args.path, {
-      startLine: args.startLine,
-      endLine: args.endLine,
-      content: args.content,
-      pattern: args.pattern,
-      replacement: args.replacement,
-      flags: args.flags,
-      backup: args.backup !== false,
-      sudo: Boolean(args.sudo)
-    });
+    const _patchOs = await detectRemoteOs(args);
+    const command = _patchOs === "windows"
+      ? filePatchScriptWindows(args.path, {
+          startLine: args.startLine, endLine: args.endLine, content: args.content,
+          pattern: args.pattern, replacement: args.replacement, backup: args.backup !== false
+        })
+      : filePatchScript(args.path, {
+          startLine: args.startLine, endLine: args.endLine, content: args.content,
+          pattern: args.pattern, replacement: args.replacement, flags: args.flags,
+          backup: args.backup !== false, sudo: Boolean(args.sudo)
+        });
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
-    const result = await runSshCommand({ ...args, command, mode: "bash" });
+    const result = await runSshCommand({ ...args, command, mode: _patchOs === "windows" ? "powershell" : "bash" });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
@@ -1377,14 +1445,14 @@ async function callTool(name, args) {
     if (mutatingActions[args.action] && args.confirm !== true) {
       return requireConfirm(name, args);
     }
-    const command = packageScript({
-      action: args.action,
-      packages: Array.isArray(args.packages) ? args.packages : [],
-      sudo: args.sudo !== false,
-      manager: args.manager || null
-    });
+    const _pkgOs = await detectRemoteOs(args);
+    const pkgs = Array.isArray(args.packages) ? args.packages : [];
+    const command = _pkgOs === "windows"
+      ? packageScriptWindows({ action: args.action, packages: pkgs, manager: args.manager || null })
+      : packageScript({ action: args.action, packages: pkgs, sudo: args.sudo !== false, manager: args.manager || null });
+    const pkgMode = _pkgOs === "windows" ? "powershell" : "bash";
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
-    const result = await runSshCommand({ ...args, command, mode: "bash", timeoutMs: args.timeoutMs || 120_000 });
+    const result = await runSshCommand({ ...args, command, mode: pkgMode, timeoutMs: args.timeoutMs || 120_000 });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 
@@ -1421,7 +1489,8 @@ async function callTool(name, args) {
       jumpUser: args.jumpUser,
       targetUser: args.targetUser,
       localSwitchUser: args.localSwitchUser,
-      extraArgs: args.extraArgs
+      extraArgs: args.extraArgs,
+      shell: args.shell
     });
     return textResult(JSON.stringify(profiles, null, 2));
   }

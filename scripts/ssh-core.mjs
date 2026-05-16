@@ -225,6 +225,30 @@ function clearProfileAuthFailed(name) {
   });
 }
 
+const _osCache = new Map();
+
+export async function detectRemoteOs(input) {
+  let key;
+  try {
+    const targetInfo = resolveTarget(input);
+    key = input.profile || input.target || targetInfo.target;
+    if (_osCache.has(key)) return _osCache.get(key);
+    const probe = "uname -s 2>/dev/null || ver 2>nul || cmd /c ver";
+    const sshArgs = [...targetInfo.sshArgs, targetInfo.target, probe];
+    const result = await runProcess("ssh", sshArgs, { timeoutMs: 10_000, maxOutputBytes: 4096 });
+    const out = (result.stdout + result.stderr).toLowerCase();
+    const os = /microsoft windows|windows \[version/.test(out) ? "windows" : "linux";
+    _osCache.set(key, os);
+    return os;
+  } catch {
+    return "linux";
+  }
+}
+
+export function clearOsCache(key) {
+  if (key) _osCache.delete(key); else _osCache.clear();
+}
+
 export function listLocalSshKeys() {
   const sshDir = join(os.homedir(), ".ssh");
   const homeDir = os.homedir();
@@ -458,7 +482,8 @@ export function addProfile(name, profile) {
     ...(profile.jumpProfile && { jumpProfile: profile.jumpProfile }),
     ...(profile.jumpUser && { jumpUser: profile.jumpUser }),
     ...(profile.targetUser && { targetUser: profile.targetUser }),
-    ...(Array.isArray(profile.extraArgs) && profile.extraArgs.length > 0 && { extraArgs: profile.extraArgs })
+    ...(Array.isArray(profile.extraArgs) && profile.extraArgs.length > 0 && { extraArgs: profile.extraArgs }),
+    ...(profile.shell && ["bash", "powershell", "auto"].includes(profile.shell) && { shell: profile.shell })
   };
   if (profile.password) {
     entry.encryptedPassword = encryptPassword(String(profile.password));
@@ -466,6 +491,7 @@ export function addProfile(name, profile) {
   }
   writeProfileEntry(name, entry);
   clearProfileAuthFailed(name);
+  clearOsCache(profile.name || name);
   return listProfiles();
 }
 
@@ -474,6 +500,7 @@ export function removeProfile(name) {
     throw new Error(`Profile "${name}" not found in dynamic config. Only MCP-added profiles can be removed.`);
   }
   deleteProfileEntry(name);
+  clearOsCache(name);
   return listProfiles();
 }
 
@@ -720,6 +747,19 @@ function resolveRemoteJump(config, requestedTarget, merged) {
   };
 }
 
+async function resolveMode(input, targetInfo) {
+  if (["bash", "raw", "powershell"].includes(input.mode)) return input.mode;
+  const shell = targetInfo.options && targetInfo.options.shell;
+  if (shell === "powershell") return "powershell";
+  if (shell === "bash") return "bash";
+  try {
+    const os = await detectRemoteOs(input);
+    return os === "windows" ? "powershell" : "bash";
+  } catch {
+    return "bash";
+  }
+}
+
 export async function runSshCommand(input = {}) {
   if (!input.command || typeof input.command !== "string") {
     throw new Error("command is required.");
@@ -749,7 +789,7 @@ export async function runSshCommand(input = {}) {
     }
   }
   const timeoutMs = Number(targetInfo.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const mode = input.mode || "bash";
+  const mode = await resolveMode(input, targetInfo);
   const sshArgs = [...targetInfo.sshArgs, targetInfo.target];
   let stdin = null;
 
@@ -759,6 +799,15 @@ export async function runSshCommand(input = {}) {
       stdin = buildRemoteJumpRawScript(input.command, targetInfo.remoteJump, targetInfo.options);
     } else {
       sshArgs.push(input.command);
+    }
+  } else if (mode === "powershell") {
+    const bootstrap = "if (Get-Command pwsh -ErrorAction SilentlyContinue) { pwsh -NonInteractive -NoProfile -ExecutionPolicy Bypass -Command - } else { powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -Command - }";
+    sshArgs.push(bootstrap);
+    stdin = targetInfo.remoteJump
+      ? buildRemoteJumpPowerShellScript(input, targetInfo.remoteJump, targetInfo.options)
+      : buildRemotePowerShellScript(input);
+    if (input.sudo === true) {
+      stdin = "# [note: sudo:true ignored — Windows OpenSSH has no sudo; use admin-privileged SSH user]\n" + stdin;
     }
   } else {
     const useSudo = Boolean(input.sudo) || targetInfo.options.access === "sudo";
@@ -825,6 +874,39 @@ function buildRemoteJumpScript(input, remoteJump, options) {
   return [
     "set +e",
     `${prefix}ssh ${nestedArgs.map(shellQuote).join(" ")} bash -s <<'${delimiter}'`,
+    destinationScript.trimEnd(),
+    delimiter,
+    ""
+  ].join("\n");
+}
+
+function buildRemotePowerShellScript(input) {
+  const parts = [
+    "$ErrorActionPreference = 'Continue'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new()"
+  ];
+  if (input.cwd) parts.push(`Set-Location -LiteralPath ${psQuote(String(input.cwd))}`);
+  if (input.env && typeof input.env === "object") {
+    for (const [k, v] of Object.entries(input.env)) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+        parts.push(`$env:${k} = ${psQuote(String(v))}`);
+      }
+    }
+  }
+  parts.push(String(input.command).replace(/\r\n/g, "\n"));
+  return parts.join("\n") + "\n";
+}
+
+function buildRemoteJumpPowerShellScript(input, remoteJump, options) {
+  const destinationScript = buildRemotePowerShellScript(input);
+  const delimiter = uniqueHeredocDelimiter(destinationScript);
+  const nestedArgs = buildNestedSshArgs(remoteJump.destination, options);
+  const prefix = remoteJump.user ? `sudo -n -u ${shellQuote(remoteJump.user)} -- ` : "";
+  const bootstrap = shellQuote("powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -Command -");
+  return [
+    "set +e",
+    `${prefix}ssh ${nestedArgs.map(shellQuote).join(" ")} ${bootstrap} <<'${delimiter}'`,
     destinationScript.trimEnd(),
     delimiter,
     ""
@@ -1123,6 +1205,79 @@ export function filePatchScript(path, {
   }
 
   return parts.join("\n") + "\n";
+}
+
+export function fileReadScriptWindows(path, maxBytes = 51200, encoding = "text") {
+  const p = psQuote(String(path));
+  if (encoding === "base64") {
+    return `$ErrorActionPreference = 'Continue'
+$bytes = [IO.File]::ReadAllBytes(${p})
+$limit = ${Math.floor(Number(maxBytes) || 51200)}
+if ($bytes.Length -gt $limit) { $bytes = $bytes[0..($limit-1)] }
+[Convert]::ToBase64String($bytes)
+`;
+  }
+  return `$ErrorActionPreference = 'Continue'
+$limit = ${Math.floor(Number(maxBytes) || 51200)}
+$content = [IO.File]::ReadAllText(${p}, [Text.UTF8Encoding]::new())
+if ($content.Length -gt $limit) { $content = $content.Substring(0, $limit) }
+$content
+`;
+}
+
+export function fileWriteScriptWindows(path, content, { backup = true, sudo = false, encoding = "text" } = {}) {
+  const p = psQuote(String(path));
+  const safeContent = psQuote(String(content));
+  const backupScript = backup
+    ? `$bak = ${p} + '.bak.' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+if (Test-Path -LiteralPath ${p}) { Copy-Item -LiteralPath ${p} -Destination $bak }`
+    : "";
+  if (encoding === "base64") {
+    return `$ErrorActionPreference = 'Continue'
+${backupScript}
+$bytes = [Convert]::FromBase64String(${psQuote(String(content))})
+[IO.File]::WriteAllBytes(${p}, $bytes)
+Write-Output "Written $($bytes.Length) bytes to ${p}"
+`;
+  }
+  return `$ErrorActionPreference = 'Continue'
+${backupScript}
+[IO.File]::WriteAllText(${p}, ${safeContent}, [Text.UTF8Encoding]::new())
+Write-Output "Written to ${p}"
+`;
+}
+
+export function filePatchScriptWindows(path, { pattern, replacement, startLine, endLine, content: patchContent, backup = true } = {}) {
+  const p = psQuote(String(path));
+  const backupScript = backup
+    ? `if (Test-Path -LiteralPath ${p}) { Copy-Item -LiteralPath ${p} -Destination (${p} + '.bak.' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) }`
+    : "";
+  if (pattern !== undefined) {
+    const pat = psQuote(String(pattern));
+    const rep = psQuote(String(replacement ?? ""));
+    return `$ErrorActionPreference = 'Continue'
+${backupScript}
+$c = [IO.File]::ReadAllText(${p}, [Text.UTF8Encoding]::new())
+$c = $c -replace ${pat}, ${rep}
+[IO.File]::WriteAllText(${p}, $c, [Text.UTF8Encoding]::new())
+Write-Output "Patched ${p}"
+`;
+  }
+  if (startLine !== undefined) {
+    const sl = Math.floor(Number(startLine));
+    const el = Math.floor(Number(endLine ?? startLine));
+    const newContent = psQuote(String(patchContent ?? ""));
+    return `$ErrorActionPreference = 'Continue'
+${backupScript}
+$lines = [IO.File]::ReadAllLines(${p}, [Text.UTF8Encoding]::new())
+$before = $lines[0..(${sl - 2})]
+$after = if ($lines.Length -gt ${el}) { $lines[${el}..($lines.Length-1)] } else { @() }
+$newLines = @($before) + @(${newContent}) + @($after)
+[IO.File]::WriteAllLines(${p}, $newLines, [Text.UTF8Encoding]::new())
+Write-Output "Patched lines ${sl}-${el} in ${p}"
+`;
+  }
+  throw new Error("filePatchScriptWindows: requires pattern or startLine.");
 }
 
 export function serviceScript(service, action, { sudo = true } = {}) {
@@ -1463,6 +1618,78 @@ export function packageScript({ action, packages = [], sudo = true, manager = nu
   };
 
   return ["set +e", "export LC_ALL=C", ...detect, `echo "Package manager: $_pm"`, ...dispatch[action]].join("\n") + "\n";
+}
+
+export function packageScriptWindows({ action, packages = [], manager = null } = {}) {
+  const validActions = ["list", "search", "info", "install", "remove", "update", "upgrade", "autoremove"];
+  if (!validActions.includes(action)) throw new Error(`Invalid action: ${action}.`);
+  if (["install", "remove", "search", "info"].includes(action) && packages.length === 0) {
+    throw new Error(`packages is required for ${action}.`);
+  }
+
+  const pkgsList = packages.map(p => psQuote(String(p))).join(", ");
+  const pkgsSpace = packages.map(p => psQuote(String(p))).join(" ");
+
+  const detect = manager
+    ? `$pm = ${psQuote(String(manager))}`
+    : `$pm = if (Get-Command winget -ErrorAction SilentlyContinue) { 'winget' } elseif (Get-Command choco -ErrorAction SilentlyContinue) { 'choco' } elseif (Get-Command scoop -ErrorAction SilentlyContinue) { 'scoop' } else { throw 'No Windows package manager found (winget/choco/scoop)' }`;
+
+  const actions = {
+    list: `switch ($pm) {
+  'winget' { winget list }
+  'choco'  { choco list --local-only }
+  'scoop'  { scoop list }
+  default  { throw "Unknown manager: $pm" }
+}`,
+    search: `foreach ($p in @(${pkgsList})) {
+  switch ($pm) {
+    'winget' { winget search $p }
+    'choco'  { choco search $p }
+    'scoop'  { scoop search $p }
+  }
+}`,
+    info: `foreach ($p in @(${pkgsList})) {
+  switch ($pm) {
+    'winget' { winget show $p }
+    'choco'  { choco info $p }
+    'scoop'  { scoop info $p }
+  }
+}`,
+    install: `switch ($pm) {
+  'winget' { foreach ($p in @(${pkgsList})) { winget install --silent --accept-package-agreements --accept-source-agreements $p } }
+  'choco'  { choco install -y ${pkgsSpace} }
+  'scoop'  { scoop install ${pkgsSpace} }
+}`,
+    remove: `switch ($pm) {
+  'winget' { foreach ($p in @(${pkgsList})) { winget uninstall --silent $p } }
+  'choco'  { choco uninstall -y ${pkgsSpace} }
+  'scoop'  { scoop uninstall ${pkgsSpace} }
+}`,
+    update: packages.length > 0
+      ? `switch ($pm) {
+  'winget' { foreach ($p in @(${pkgsList})) { winget upgrade --silent $p } }
+  'choco'  { choco upgrade -y ${pkgsSpace} }
+  'scoop'  { scoop update ${pkgsSpace} }
+}`
+      : `switch ($pm) {
+  'winget' { winget upgrade --all --silent }
+  'choco'  { choco upgrade -y all }
+  'scoop'  { scoop update '*' }
+}`,
+    upgrade: `switch ($pm) {
+  'winget' { winget upgrade --all --silent --include-unknown }
+  'choco'  { choco upgrade -y all }
+  'scoop'  { scoop update; scoop update '*' }
+}`,
+    autoremove: `Write-Output 'autoremove: cleaning caches'
+switch ($pm) {
+  'winget' { Write-Output 'winget: no autoremove support' }
+  'choco'  { Write-Output 'choco: no autoremove support' }
+  'scoop'  { scoop cleanup '*' }
+}`
+  };
+
+  return `$ErrorActionPreference = 'Continue'\n${detect}\n${actions[action]}\n`;
 }
 
 export function cronScript({ action, user, schedule, command: cronCommand } = {}) {
@@ -2082,4 +2309,8 @@ async function runProcess(command, args, options = {}) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+export function psQuote(v) {
+  return `'${String(v).replace(/'/g, "''")}'`;
 }
