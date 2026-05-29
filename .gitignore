@@ -9,3 +9,21 @@ docs/
 .claude/settings.local.json
 .cursor/
 .gemini/
+# Added by code-review-graph
+.code-review-graph/
+.claude/settings.json.bak
+.claude/skills/debug-issue/
+.claude/skills/explore-codebase/
+.claude/skills/refactor-safely/
+.claude/skills/review-changes/
+.cursorrules
+.github/code-review-graph.instruction.md
+.kiro/
+.opencode.json
+.qoder/
+.windsurfrules
+AGENTS.md
+GEMINI.md
+QODER.md
+ssh-ops-server.log
+
