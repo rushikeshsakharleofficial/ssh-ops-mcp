@@ -156,6 +156,21 @@ fetch .codex-plugin/plugin.json
 fetch .claude-plugin/plugin.json
 fetch skills/ssh-ops/SKILL.md
 fetch skills/ssh-ops/agents/openai.yaml
+MCP_SERVER_PATH="$DIR/scripts/ssh-mcp-server.mjs" MCP_FILE="$DIR/.mcp.json" node - <<'NODE'
+const fs = require("fs");
+const { MCP_FILE: file, MCP_SERVER_PATH: serverPath } = process.env;
+fs.writeFileSync(
+  file,
+  JSON.stringify({
+    mcpServers: {
+      "ssh-ops": {
+        command: "node",
+        args: [serverPath]
+      }
+    }
+  }, null, 2) + "\n"
+);
+NODE
 ok "Files downloaded"
 
 # ── Encryption key ─────────────────────────────────────────────────────────────
