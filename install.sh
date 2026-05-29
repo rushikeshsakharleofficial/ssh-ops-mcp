@@ -140,7 +140,18 @@ fetch scripts/ssh-mcp-server.mjs
 fetch scripts/ssh-core.mjs
 fetch scripts/ssh-ops.mjs
 fetch scripts/ssh-cli-options.mjs
+for _tool in \
+  ssh-tools-advanced.mjs ssh-tools-bench.mjs ssh-tools-certbot.mjs \
+  ssh-tools-containers.mjs ssh-tools-database.mjs ssh-tools-deploy2.mjs \
+  ssh-tools-fleet.mjs ssh-tools-netutils.mjs ssh-tools-network.mjs \
+  ssh-tools-observability.mjs ssh-tools-perf.mjs ssh-tools-security2.mjs \
+  ssh-tools-storage.mjs ssh-tools-storage2.mjs ssh-tools-storage3.mjs \
+  ssh-tools-system2.mjs ssh-tools-webserver.mjs ssh-tools-windows.mjs \
+  ssh-tools-windows2.mjs ssh-tools-wireguard.mjs; do
+  fetch "scripts/$_tool"
+done
 fetch ssh-ops.config.example.yaml
+fetch .mcp.json
 fetch .codex-plugin/plugin.json
 fetch .claude-plugin/plugin.json
 fetch skills/ssh-ops/SKILL.md
@@ -406,14 +417,52 @@ fi
 # ── Codex ──────────────────────────────────────────────────────────────────────
 
 step "Codex"
-if has codex || [ -d "$CODEX_PLUGINS" ]; then
-  mkdir -p "$CODEX_PLUGINS"
-  _codex_link="$CODEX_PLUGINS/ssh-ops"
-  if [ -L "$_codex_link" ] && [ "$(readlink -f "$_codex_link" 2>/dev/null)" = "$(readlink -f "$DIR")" ]; then
-    ok "Already linked (up-to-date)"
+if has codex || [ -d "$HOME/.codex" ] || [ -d "$CODEX_PLUGINS" ]; then
+  CODEX_MARKETPLACE="${CODEX_MARKETPLACE_FILE:-$HOME/.agents/plugins/marketplace.json}"
+  CODEX_SOURCE_DIR="${CODEX_PERSONAL_PLUGINS_DIR:-$HOME/plugins}"
+  mkdir -p "$(dirname "$CODEX_MARKETPLACE")" "$CODEX_SOURCE_DIR"
+  _codex_source="$CODEX_SOURCE_DIR/ssh-ops"
+  if [ -e "$_codex_source" ] && [ ! -L "$_codex_source" ]; then
+    if [ "$(cd "$_codex_source" 2>/dev/null && pwd -P)" != "$(cd "$DIR" && pwd -P)" ]; then
+      warn "$_codex_source already exists and is not a symlink; leaving it untouched"
+    fi
   else
-    ln -sfn "$DIR" "$_codex_link"
-    ok "Linked at $_codex_link"
+    ln -sfn "$DIR" "$_codex_source"
+  fi
+
+  _codex_marketplace_name=$(
+    CODEX_MARKETPLACE="$CODEX_MARKETPLACE" node - <<\NODE
+const fs = require("fs");
+const f = process.env.CODEX_MARKETPLACE;
+let d = {};
+try { d = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+d.name = d.name || "personal";
+d.interface = d.interface || { displayName: "Personal" };
+d.interface.displayName = d.interface.displayName || "Personal";
+d.plugins = Array.isArray(d.plugins) ? d.plugins : [];
+const entry = {
+  name: "ssh-ops",
+  source: { source: "local", path: "./plugins/ssh-ops" },
+  policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+  category: "Productivity"
+};
+const index = d.plugins.findIndex(p => p && p.name === "ssh-ops");
+if (index >= 0) d.plugins[index] = { ...d.plugins[index], ...entry };
+else d.plugins.push(entry);
+fs.writeFileSync(f, JSON.stringify(d, null, 2) + "\n");
+process.stdout.write(d.name);
+NODE
+  )
+
+  if has codex; then
+    if codex plugin add "ssh-ops@$_codex_marketplace_name" >/dev/null 2>&1; then
+      ok "Installed and enabled from marketplace $_codex_marketplace_name"
+    else
+      warn "Marketplace registered, but codex plugin add failed — run: codex plugin add ssh-ops@$_codex_marketplace_name"
+    fi
+  else
+    ok "Marketplace registered at $CODEX_MARKETPLACE"
+    info "Install later with: codex plugin add ssh-ops@$_codex_marketplace_name"
   fi
 else
   skip "Not detected — skipping"

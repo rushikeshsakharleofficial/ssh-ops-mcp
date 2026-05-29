@@ -82,7 +82,14 @@ $files = @(
     "VERSION",
     "scripts/ssh-mcp-server.mjs", "scripts/ssh-core.mjs",
     "scripts/ssh-ops.mjs", "scripts/ssh-cli-options.mjs",
-    "ssh-ops.config.example.yaml",
+    "scripts/ssh-tools-advanced.mjs", "scripts/ssh-tools-bench.mjs", "scripts/ssh-tools-certbot.mjs",
+    "scripts/ssh-tools-containers.mjs", "scripts/ssh-tools-database.mjs", "scripts/ssh-tools-deploy2.mjs",
+    "scripts/ssh-tools-fleet.mjs", "scripts/ssh-tools-netutils.mjs", "scripts/ssh-tools-network.mjs",
+    "scripts/ssh-tools-observability.mjs", "scripts/ssh-tools-perf.mjs", "scripts/ssh-tools-security2.mjs",
+    "scripts/ssh-tools-storage.mjs", "scripts/ssh-tools-storage2.mjs", "scripts/ssh-tools-storage3.mjs",
+    "scripts/ssh-tools-system2.mjs", "scripts/ssh-tools-webserver.mjs", "scripts/ssh-tools-windows.mjs",
+    "scripts/ssh-tools-windows2.mjs", "scripts/ssh-tools-wireguard.mjs",
+    "ssh-ops.config.example.yaml", ".mcp.json",
     ".codex-plugin/plugin.json",
     ".claude-plugin/plugin.json",
     "skills/ssh-ops/SKILL.md",
@@ -316,16 +323,56 @@ if ($mcpInfo -match [regex]::Escape($McpTarget)) {
 # ── Codex ──────────────────────────────────────────────────────────────────────
 
 Step "Codex"
-if ((Has "codex") -or (Test-Path $CodexPlugins)) {
-    New-Item -ItemType Directory -Force -Path $CodexPlugins | Out-Null
-    $link = Join-Path $CodexPlugins "ssh-ops"
-    $linkTarget = if (Test-Path $link) { (Get-Item $link).Target } else { $null }
-    if ($linkTarget -and ((Resolve-Path $linkTarget -ErrorAction SilentlyContinue).Path -eq (Resolve-Path $Dir).Path)) {
-        Ok "Already linked (up-to-date)"
+if ((Has "codex") -or (Test-Path "$env:USERPROFILE\.codex") -or (Test-Path $CodexPlugins)) {
+    $CodexMarketplace = if ($env:CODEX_MARKETPLACE_FILE) { $env:CODEX_MARKETPLACE_FILE } else { "$env:USERPROFILE\.agents\plugins\marketplace.json" }
+    $CodexSourceDir = if ($env:CODEX_PERSONAL_PLUGINS_DIR) { $env:CODEX_PERSONAL_PLUGINS_DIR } else { "$env:USERPROFILE\plugins" }
+    New-Item -ItemType Directory -Force -Path (Split-Path $CodexMarketplace) | Out-Null
+    New-Item -ItemType Directory -Force -Path $CodexSourceDir | Out-Null
+
+    $link = Join-Path $CodexSourceDir "ssh-ops"
+    if (Test-Path $link) {
+        $existing = Get-Item $link -Force
+        if ($existing.LinkType -in @("Junction", "SymbolicLink")) {
+            Remove-Item $link -Force
+            New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
+        } elseif ((Resolve-Path $link).Path -ne (Resolve-Path $Dir).Path) {
+            Warn "$link already exists and is not a junction; leaving it untouched"
+        }
     } else {
-        if (Test-Path $link) { Remove-Item $link -Force -Recurse }
         New-Item -ItemType Junction -Path $link -Target $Dir | Out-Null
-        Ok "Linked at $link"
+    }
+
+    $env:CODEX_MARKETPLACE = $CodexMarketplace
+    $marketplaceName = node -e @"
+const fs = require('fs');
+const f = process.env.CODEX_MARKETPLACE;
+let d = {};
+try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+d.name = d.name || 'personal';
+d.interface = d.interface || { displayName: 'Personal' };
+d.interface.displayName = d.interface.displayName || 'Personal';
+d.plugins = Array.isArray(d.plugins) ? d.plugins : [];
+const entry = {
+  name: 'ssh-ops',
+  source: { source: 'local', path: './plugins/ssh-ops' },
+  policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+  category: 'Productivity'
+};
+const index = d.plugins.findIndex(p => p && p.name === 'ssh-ops');
+if (index >= 0) d.plugins[index] = { ...d.plugins[index], ...entry };
+else d.plugins.push(entry);
+fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+process.stdout.write(d.name);
+"@
+    Remove-Item Env:\CODEX_MARKETPLACE -ErrorAction SilentlyContinue
+
+    if (Has "codex") {
+        & codex plugin add "ssh-ops@$marketplaceName" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { Ok "Installed and enabled from marketplace $marketplaceName" }
+        else { Warn "Marketplace registered, but codex plugin add failed — run: codex plugin add ssh-ops@$marketplaceName" }
+    } else {
+        Ok "Marketplace registered at $CodexMarketplace"
+        Info "Install later with: codex plugin add ssh-ops@$marketplaceName"
     }
 } else { Skip "Not detected — skipping" }
 

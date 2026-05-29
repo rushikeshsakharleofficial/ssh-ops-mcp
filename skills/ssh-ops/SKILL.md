@@ -1,6 +1,6 @@
 ---
 name: ssh-ops
-description: SSH Ops MCP — 88 tools for remote SSH ops across Linux, BSD, macOS, and Windows. Covers: exec, inventory, health, files, services, packages (14 managers), cron, timers, users, docker, compose, kubernetes, databases (5 engines), nginx, apache, firewall, TLS/certs/certbot, port scan, fail2ban, security audit, intrusion detection, authorized_keys, LVM, sysctl, swap, kernel, ulimits, rsync, atomic deploy, rollback, fleet health, anomaly detection, change tracking, perf, dmesg, tcpdump, DNS, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server diff, output diff watching, IP groups, jump servers, process management, env vars.
+description: "SSH Ops MCP — 88 tools for remote SSH ops across Linux, BSD, macOS, and Windows. Covers: exec, inventory, health, files, services, packages (14 managers), cron, timers, users, docker, compose, kubernetes, databases (5 engines), nginx, apache, firewall, TLS/certs/certbot, port scan, fail2ban, security audit, intrusion detection, authorized_keys, LVM, sysctl, swap, kernel, ulimits, rsync, atomic deploy, rollback, fleet health, anomaly detection, change tracking, perf, dmesg, tcpdump, DNS, traceroute, /etc/hosts, mounts, git, backups, templates, snapshots, server diff, output diff watching, IP groups, jump servers, process management, env vars."
 ---
 
 # SSH Ops — 75 Tools
