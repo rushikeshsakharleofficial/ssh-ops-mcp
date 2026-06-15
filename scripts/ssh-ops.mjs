@@ -3,6 +3,8 @@ import {
   addJumpServer,
   addProfile,
   diskReportScript,
+  exportRawConfig,
+  importRawConfig,
   fileReadScript,
   fileWriteScript,
   formatRunResult,
@@ -19,6 +21,46 @@ import {
   serviceScript
 } from "./ssh-core.mjs";
 import { parseOptions } from "./ssh-cli-options.mjs";
+
+function readHiddenLine(prompt) {
+  return new Promise((resolve) => {
+    process.stdout.write(prompt);
+    let input = "";
+    const onData = (char) => {
+      if (char === "\r" || char === "\n" || char === "") {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.removeListener("data", onData);
+        process.stdout.write("\n");
+        resolve(input);
+      } else if (char === "") {
+        process.stdout.write("\n");
+        process.exit(1);
+      } else if (char === "" || char === "\b") {
+        input = input.slice(0, -1);
+      } else {
+        input += char;
+      }
+    };
+    if (!process.stdin.isTTY) {
+      // Piped input — read line without hiding (no TTY to hide anyway)
+      import("node:readline").then(({ createInterface }) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        rl.question("", (a) => { rl.close(); resolve(a.trim()); });
+      });
+      return;
+    }
+    try {
+      process.stdin.setRawMode(true);
+    } catch {
+      resolve("");
+      return;
+    }
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", onData);
+  });
+}
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -187,18 +229,16 @@ try {
   }
 
   if (command === "export") {
-    const { createInterface } = await import("node:readline");
     const { createCipheriv, pbkdf2Sync, randomBytes } = await import("node:crypto");
     const { writeFileSync } = await import("node:fs");
     const outFile = rest[0];
     if (!outFile) { console.error("Usage: ssh-ops export <output-file.enc>"); process.exit(1); }
 
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const passphrase = await new Promise(res => rl.question("Passphrase: ", a => { rl.close(); res(a.trim()); }));
+    const passphrase = await readHiddenLine("Passphrase: ");
     if (!passphrase) { console.error("Passphrase required."); process.exit(1); }
 
-    const profiles = listProfiles();
-    const payload = JSON.stringify(profiles);
+    const raw = exportRawConfig();
+    const payload = JSON.stringify({ v: 2, ...raw });
     const salt = randomBytes(16);
     const key = pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
     const iv = randomBytes(12);
@@ -206,31 +246,29 @@ try {
     const enc = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
     const tag = cipher.getAuthTag();
     const bundle = JSON.stringify({
-      v: 1,
+      v: 2,
       salt: salt.toString("hex"),
       iv: iv.toString("hex"),
       tag: tag.toString("hex"),
       data: enc.toString("hex")
     });
     writeFileSync(outFile, bundle, { mode: 0o600 });
-    console.log(`Exported ${Object.keys(profiles.profiles || {}).length} profile(s) to ${outFile}`);
+    console.log(`Exported ${Object.keys(raw.profiles || {}).length} profile(s) to ${outFile}`);
     process.exit(0);
   }
 
   if (command === "import") {
-    const { createInterface } = await import("node:readline");
     const { createDecipheriv, pbkdf2Sync } = await import("node:crypto");
     const { readFileSync: rfs } = await import("node:fs");
     const inFile = rest[0];
     if (!inFile) { console.error("Usage: ssh-ops import <input-file.enc>"); process.exit(1); }
 
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const passphrase = await new Promise(res => rl.question("Passphrase: ", a => { rl.close(); res(a.trim()); }));
+    const passphrase = await readHiddenLine("Passphrase: ");
     if (!passphrase) { console.error("Passphrase required."); process.exit(1); }
 
     let bundle;
     try { bundle = JSON.parse(rfs(inFile, "utf8")); } catch { console.error("Cannot read bundle file."); process.exit(1); }
-    if (bundle.v !== 1) { console.error("Unknown bundle version."); process.exit(1); }
+    if (bundle.v !== 2 && bundle.v !== 1) { console.error("Unknown bundle version."); process.exit(1); }
 
     const salt = Buffer.from(bundle.salt, "hex");
     const key = pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
@@ -247,12 +285,15 @@ try {
     let imported;
     try { imported = JSON.parse(payload); } catch { console.error("Bundle payload is not valid JSON."); process.exit(1); }
 
-    let count = 0;
-    for (const [name, prof] of Object.entries(imported.profiles || {})) {
-      try {
-        addProfile(name, { host: prof.host, user: prof.user, port: prof.port });
-        count++;
-      } catch {}
+    let count;
+    if (bundle.v === 2) {
+      count = importRawConfig(imported);
+    } else {
+      // v1 bundle: legacy format — only had sanitized profile display data
+      count = 0;
+      for (const [name, prof] of Object.entries(imported.profiles || {})) {
+        try { addProfile(name, { host: prof.host, user: prof.user, port: prof.port }); count++; } catch {}
+      }
     }
     console.log(`Imported ${count} profile(s) from ${inFile}`);
     process.exit(0);

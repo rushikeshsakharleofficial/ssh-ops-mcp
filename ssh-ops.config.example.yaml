@@ -1,3 +1,11 @@
+# ── ssh-ops YAML config (limited subset) ──────────────────────────────────────
+# Supported: key: value, nested objects (indented with spaces — NO tabs),
+# inline arrays: key: [a, b, c], quoted strings: key: "value", booleans, numbers.
+# NOT supported: block sequences (- item syntax), multiline strings (|, >),
+# anchors/aliases (&, *), tags (!), flow mappings ({key: val}).
+# For complex structures use ssh-ops.config.json instead.
+# ──────────────────────────────────────────────────────────────────────────────
+
 defaultTarget: production
 defaults:
   connectTimeoutSec: 12

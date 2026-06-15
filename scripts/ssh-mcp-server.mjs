@@ -38,19 +38,35 @@ import {
   packageScriptWindows,
   fileReadScriptWindows,
   fileWriteScriptWindows,
-  filePatchScriptWindows
+  filePatchScriptWindows,
+  shellQuote
 } from "./ssh-core.mjs";
-const _extraModules = [];
+const _extraModules = await (async () => {
+  const scriptsDir = join(PLUGIN_ROOT, "scripts");
+  let entries;
+  try { entries = readdirSync(scriptsDir); } catch { return []; }
+  const mods = [];
+  for (const file of entries.sort()) {
+    if (!file.startsWith("ssh-tools-") || !file.endsWith(".mjs")) continue;
+    try {
+      const mod = await import(join(scriptsDir, file));
+      if (Array.isArray(mod.toolDefs) && typeof mod.handleTool === "function") {
+        mods.push(mod);
+      }
+    } catch {}
+  }
+  return mods;
+})();
 
 import https from "node:https";
 import net from "node:net";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as pathResolve, sep as pathSep } from "node:path";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_VERSION = (() => {
   try {
-    return readFileSync(join(PLUGIN_ROOT, "..", "VERSION"), "utf8").trim().replace(/^v/, "");
+    return readFileSync(join(PLUGIN_ROOT, "VERSION"), "utf8").trim().replace(/^v/, "");
   } catch {
     return "1.14.1";
   }
@@ -514,7 +530,9 @@ const allTools = [
         targetUser: { type: "string", description: "Override the destination SSH username when routing through a jumpProfile." },
         localSwitchUser: { type: "string", description: "Switch to this local user (via sudo -n -u) before running SSH. Use when ssh-ops is running on a jump/bastion server and internal targets require a different local user for key access." },
         extraArgs: { type: "array", items: { type: "string" }, description: "Extra SSH arguments." },
-        shell: { type: "string", enum: ["bash", "powershell", "auto"], description: "Remote shell. auto (default) probes on first connect. Use powershell for Windows targets." }
+        shell: { type: "string", enum: ["bash", "powershell", "auto"], description: "Remote shell. auto (default) probes on first connect. Use powershell for Windows targets." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log." }
       },
       required: ["name", "host"]
     }
@@ -526,7 +544,9 @@ const allTools = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Profile name to remove." }
+        name: { type: "string", description: "Profile name to remove." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log." }
       },
       required: ["name"]
     }
@@ -545,7 +565,9 @@ const allTools = [
         password: { type: "string", description: "SSH password (stored AES-256-GCM encrypted). Requires sshpass locally." },
         identityFile: { type: "string", description: "Path to SSH private key for this jump server." },
         appendToChain: { type: "boolean", description: "Append to the active jump chain. Default true." },
-        commonUser: { type: "string", description: "Set a shared default user for ALL target connections that have no explicit user defined (e.g. 'deploy', 'ubuntu'). Stored in dynamic config defaults." }
+        commonUser: { type: "string", description: "Set a shared default user for ALL target connections that have no explicit user defined (e.g. 'deploy', 'ubuntu'). Stored in dynamic config defaults." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log." }
       },
       required: ["name", "host"]
     }
@@ -557,7 +579,9 @@ const allTools = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Jump server name to remove." }
+        name: { type: "string", description: "Jump server name to remove." },
+        confirm: { type: "boolean", description: "Must be true to execute this mutating operation." },
+        reason: { type: "string", description: "Optional reason for this action. Logged to audit log." }
       },
       required: ["name"]
     }
@@ -917,9 +941,9 @@ const handlers = {
   initialize(message) {
     initLogger();
     serverLog("info", "ssh-ops MCP server initialized", { version: SERVER_VERSION });
-    if (process.env.SSH_OPS_AUTO_UPDATE === "1") {
-      void selfUpdate();
-    }
+    // Runtime self-update is disabled: the installer downloads many extra modules
+    // that this updater does not cover, leaving a mixed version state.
+    // Rerun install.sh / install.ps1 to update.
     const instructions = getSkillInstructions();
     const result = {
       protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
@@ -1008,13 +1032,26 @@ function validateSshOptions(opts) {
   return null;
 }
 
+const MULTILINE_ALLOWED_FIELDS = new Set([
+  "command", "content", "replacement", "script", "body", "template"
+]);
+
 function validateInput(toolName, params) {
-  // Global: reject control characters + PowerShell-dangerous chars in all string params
   for (const [k, v] of Object.entries(params)) {
-    if (typeof v === "string" && /[\r\n\x00`]/.test(v)) {
-      return `Parameter "${k}" must not contain newlines, null bytes, or backticks.`;
+    if (typeof v !== "string") continue;
+    // NUL bytes are never allowed
+    if (v.includes("\x00")) {
+      return `Parameter "${k}" must not contain null bytes.`;
     }
-    if (typeof v === "string" && v.includes("--%")) {
+    // Newlines/CR allowed in multi-line fields; everything else must be single-line
+    if (!MULTILINE_ALLOWED_FIELDS.has(k) && /[\r\n]/.test(v)) {
+      return `Parameter "${k}" must not contain newlines.`;
+    }
+    // Backticks disallowed everywhere (shell command substitution risk in interpolated contexts)
+    if (v.includes("`")) {
+      return `Parameter "${k}" must not contain backticks.`;
+    }
+    if (v.includes("--%")) {
       return `Parameter "${k}" must not contain PowerShell stop-parsing token "--%".`;
     }
   }
@@ -1077,11 +1114,21 @@ function validateInput(toolName, params) {
 
   if (toolName === "ssh_file_read" || toolName === "ssh_file_write" || toolName === "ssh_file_patch") {
     if (params.path) {
-      if (!params.path.startsWith("/")) {
-        return `path must be absolute (start with /). Got: ${params.path}`;
+      const p = params.path;
+      const isPosix = p.startsWith("/");
+      const isWinDrive = /^[A-Za-z]:[\\\/]/.test(p);
+      const isWinUnc = /^\\\\[^\\]+\\[^\\]+/.test(p) || /^\/\/[^/]+\/[^/]+/.test(p);
+      if (!isPosix && !isWinDrive && !isWinUnc) {
+        return `path must be absolute. Use a POSIX path (starting with /) or a Windows path (e.g. C:\\Temp or \\\\server\\share). Got: ${p}`;
       }
-      if (/(\/\.\.)|(\/\.$)/.test(params.path) || params.path.includes("\x00")) {
-        return `path must not contain ".." segments or null bytes. Got: ${params.path}`;
+      if (p.includes("\x00")) {
+        return `path must not contain null bytes. Got: ${p}`;
+      }
+      if (isPosix && (/(\/\.\.)|(\/\.$)/.test(p) || p.includes("/.."))) {
+        return `path must not contain ".." segments. Got: ${p}`;
+      }
+      if (!isPosix && (p.includes("..\\") || p.includes("../"))) {
+        return `path must not contain ".." traversal. Got: ${p}`;
       }
     }
   }
@@ -1741,7 +1788,7 @@ async function callTool(name, args) {
     }
     // Prepend arg exports if provided
     const scriptArgs = Array.isArray(args.args) ? args.args : [];
-    const argExports = scriptArgs.map((a, i) => `export SSH_OPS_ARG_${i + 1}=${JSON.stringify(String(a))}`).join("\n");
+    const argExports = scriptArgs.map((a, i) => `export SSH_OPS_ARG_${i + 1}=${shellQuote(String(a))}`).join("\n");
     const fullScript = argExports ? `${argExports}\n${scriptContent}` : scriptContent;
     const result = await runSshCommand({
       ...args,
@@ -1771,14 +1818,14 @@ async function callTool(name, args) {
       command = `set +e\n${sudo}docker ps -a --format '{{json .}}' 2>&1 | head -c 500000\n`;
     } else if (args.action === "logs") {
       const lines = Math.min(Number(args.lines) || 100, 5000);
-      const since = args.since ? ` --since ${JSON.stringify(String(args.since))}` : "";
-      command = `set +e\n${sudo}docker logs --tail ${lines}${since} ${JSON.stringify(String(args.container))} 2>&1\n`;
+      const since = args.since ? ` --since ${shellQuote(String(args.since))}` : "";
+      command = `set +e\n${sudo}docker logs --tail ${lines}${since} ${shellQuote(String(args.container))} 2>&1\n`;
     } else if (args.action === "inspect") {
-      command = `set +e\n${sudo}docker inspect ${JSON.stringify(String(args.container))} 2>&1\n`;
+      command = `set +e\n${sudo}docker inspect ${shellQuote(String(args.container))} 2>&1\n`;
     } else if (args.action === "stats") {
       command = `set +e\n${sudo}docker stats --no-stream --format '{{json .}}' 2>&1\n`;
     } else {
-      command = `set +e\n${sudo}docker ${args.action} ${JSON.stringify(String(args.container))} 2>&1\n`;
+      command = `set +e\n${sudo}docker ${args.action} ${shellQuote(String(args.container))} 2>&1\n`;
     }
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
     const result = await runSshCommand({ ...args, command, mode: "bash" });
@@ -1791,26 +1838,53 @@ async function callTool(name, args) {
     }
     if (!args.src || !args.dst) return textResult("src and dst are required.", true);
 
-    // Resolve 'profile:path' notation to 'user@host:path' for scp
-    async function resolveScpAddr(addr) {
-      if (!addr.includes(":")) return addr; // local path — no colon means local
+    const { resolveTarget: _rt, PLUGIN_ROOT: _PR } = await import("./ssh-core.mjs");
+
+    // Resolve 'profile:path' → { scpAddr, resolvedInfo }
+    // Returns scpAddr string and the resolved target info (for the first profile found)
+    function resolveScpAddr(addr) {
+      if (!addr.includes(":")) return { scpAddr: addr, info: null };
       const colonIdx = addr.indexOf(":");
       const profileOrHost = addr.slice(0, colonIdx);
       const remotePath = addr.slice(colonIdx + 1);
-      // Try to resolve as profile
       try {
-        const { resolveTarget: rt } = await import("./ssh-core.mjs");
-        const info = rt({ target: profileOrHost });
-        return `${info.target}:${remotePath}`;
+        const info = _rt({ target: profileOrHost });
+        return { scpAddr: `${info.target}:${remotePath}`, info };
       } catch {
-        return addr; // already user@host:path
+        return { scpAddr: addr, info: null };
       }
     }
 
-    const scpSrc = await resolveScpAddr(args.src);
-    const scpDst = await resolveScpAddr(args.dst);
-    const { spawn } = await import("node:child_process");
+    const { scpAddr: scpSrc, info: srcInfo } = resolveScpAddr(args.src);
+    const { scpAddr: scpDst, info: dstInfo } = resolveScpAddr(args.dst);
+
+    // Prefer src profile's options, fall back to dst profile's options
+    const profileInfo = srcInfo || dstInfo;
+
+    const { spawn: _spawn } = await import("node:child_process");
     const scpArgs = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
+
+    if (profileInfo) {
+      const opts = profileInfo.options || {};
+      if (opts.port) scpArgs.push("-P", String(opts.port));
+      if (opts.identityFile) scpArgs.push("-i", opts.identityFile);
+      // Jump chain: build -J arg from sshArgs (filter -J entries)
+      const sshArgs = profileInfo.sshArgs || [];
+      const jIdx = sshArgs.indexOf("-J");
+      if (jIdx !== -1 && sshArgs[jIdx + 1]) scpArgs.push("-J", sshArgs[jIdx + 1]);
+      if (Array.isArray(opts.extraArgs)) {
+        for (const a of opts.extraArgs) {
+          if (!BLOCKED_SSH_FLAGS.has(a)) scpArgs.push(a);
+        }
+      }
+      if (opts.encryptedPassword) {
+        return textResult(
+          "ssh_transfer does not support password-based profiles. Add an identityFile to the profile or use key-based auth.",
+          true
+        );
+      }
+    }
+
     if (args.recursive) scpArgs.push("-r");
     scpArgs.push(scpSrc, scpDst);
 
@@ -1818,13 +1892,16 @@ async function callTool(name, args) {
       return textResult(JSON.stringify({ dryRun: true, tool: name, command: `scp ${scpArgs.join(" ")}`, note: "dryRun:true — nothing executed" }, null, 2));
     }
 
+    const timeoutMs = (profileInfo?.options?.timeoutMs) || args.timeoutMs || 120_000;
+
     const result = await new Promise((resolve) => {
       let stdout = "", stderr = "";
-      const proc = spawn("scp", scpArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const proc = _spawn("scp", scpArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const timer = setTimeout(() => { proc.kill(); }, timeoutMs);
       proc.stdout.on("data", d => { stdout += d; });
       proc.stderr.on("data", d => { stderr += d; });
-      proc.on("close", code => resolve({ stdout, stderr, exitCode: code }));
-      proc.on("error", e => resolve({ stdout: "", stderr: e.message, exitCode: 1 }));
+      proc.on("close", code => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code }); });
+      proc.on("error", e => { clearTimeout(timer); resolve({ stdout: "", stderr: e.message, exitCode: 1 }); });
     });
 
     const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim() || "(transfer complete)";
@@ -1853,16 +1930,15 @@ async function callTool(name, args) {
     if (args.action === "list") {
       command = `set +e\nexport LC_ALL=C\ncat /etc/environment 2>/dev/null || echo "(empty)"\n`;
     } else if (args.action === "get") {
-      const keyQ = JSON.stringify(String(args.key));
       command = `set +e\nexport LC_ALL=C\ngrep -E "^${args.key}=" /etc/environment 2>/dev/null || echo "${args.key} not set in /etc/environment"\n`;
     } else if (args.action === "set") {
       const keyQ = String(args.key);
-      const valQ = String(args.value).replace(/'/g, "'\\''");
+      const valQ = shellQuote(String(args.value));
       command = `set +e
 export LC_ALL=C
 _f=/etc/environment
-_key=${JSON.stringify(keyQ)}
-_val=${JSON.stringify(valQ)}
+_key=${shellQuote(keyQ)}
+_val=${valQ}
 if grep -qE "^${keyQ}=" "$_f" 2>/dev/null; then
   sed -i "s|^${keyQ}=.*|${keyQ}=$_val|" "$_f" && echo "Updated ${keyQ} in $_f"
 else
@@ -1919,7 +1995,7 @@ fi
 
     let command;
     if (args.action === "list") {
-      const filter = args.filter ? ` | grep -i ${JSON.stringify(String(args.filter))}` : "";
+      const filter = args.filter ? ` | grep -i ${shellQuote(String(args.filter))}` : "";
       command = `set +e\nexport LC_ALL=C\nps aux --sort=-%cpu${filter} 2>/dev/null || ps aux${filter}\n`;
     } else {
       const signal = /^[A-Z0-9]+$/.test(String(args.signal || "TERM")) ? String(args.signal || "TERM") : "TERM";
@@ -1928,7 +2004,7 @@ fi
         if (!Number.isFinite(pid) || pid < 1) return textResult("pid must be a positive integer.", true);
         command = `set +e\nexport LC_ALL=C\nkill -${signal} ${pid} && echo "Sent ${signal} to PID ${pid}" || echo "kill failed"\n`;
       } else {
-        command = `set +e\nexport LC_ALL=C\npkill -${signal} -f ${JSON.stringify(String(args.processName))} && echo "Sent ${signal} to processes matching '${args.processName}'" || echo "No matching processes found"\n`;
+        command = `set +e\nexport LC_ALL=C\npkill -${signal} -f ${shellQuote(String(args.processName))} && echo "Sent ${signal} to processes matching '${args.processName}'" || echo "No matching processes found"\n`;
       }
     }
 
@@ -2049,12 +2125,31 @@ function serverLog(level, message, meta = {}) {
   } catch {}
 }
 
+const REDACT_KEYS = /password|pass|token|secret|key|private|credential|auth|cookie|header/i;
+const AUDIT_TRUNCATE_LEN = 500;
+
+function redactDeep(obj, depth = 0) {
+  if (depth > 8 || obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(v => redactDeep(v, depth + 1));
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (REDACT_KEYS.test(k)) {
+      out[k] = "[REDACTED]";
+    } else if (typeof v === "string" && v.length > AUDIT_TRUNCATE_LEN) {
+      out[k] = "[TRUNCATED]";
+    } else if (typeof v === "object" && v !== null) {
+      out[k] = redactDeep(v, depth + 1);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 // ── Richer audit log ──────────────────────────────────────────────────────────
 function writeAuditLog(name, args, result, extra = {}) {
   try {
-    const safeArgs = { ...args };
-    if (safeArgs.password) safeArgs.password = "[REDACTED]";
-    if (safeArgs.content && String(safeArgs.content).length > 200) safeArgs.content = "[TRUNCATED]";
+    const safeArgs = redactDeep({ ...args });
     const entry = {
       ts: new Date().toISOString(),
       tool: name,
