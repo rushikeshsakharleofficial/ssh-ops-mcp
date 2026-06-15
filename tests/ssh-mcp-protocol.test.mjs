@@ -133,3 +133,47 @@ test("ping returns empty result object", async () => {
   assert.ok(res.result !== undefined, "should have result");
   assert.deepEqual(res.result, {}, "ping result should be {}");
 });
+
+async function toolsCall(name, args) {
+  const res = await mcpRequest({
+    jsonrpc: "2.0",
+    id: 99,
+    method: "tools/call",
+    params: { name, arguments: args }
+  });
+  const text = res.result?.content?.[0]?.text ?? "";
+  return text;
+}
+
+test("validateInput: newline in command is accepted (multiline-allowed field)", async () => {
+  // dryRun:true returns immediately after validation without SSH
+  const text = await toolsCall("ssh_run", { target: "any", command: "echo hello\necho world", dryRun: true });
+  assert.ok(!text.includes("must not contain newlines"), "newline in command should pass validation");
+});
+
+test("validateInput: backtick in command is accepted (stdin-fed, not interpolated)", async () => {
+  const text = await toolsCall("ssh_run", { target: "any", command: "echo `date`", dryRun: true });
+  assert.ok(!text.includes("must not contain backticks"), "backtick in command should pass validation");
+});
+
+test("validateInput: newline in target is rejected (non-multiline field)", async () => {
+  const text = await toolsCall("ssh_run", { target: "bad\ntarget", command: "echo hi" });
+  assert.ok(text.includes("must not contain newlines"), "newline in target should fail validation");
+});
+
+test("validateInput: backtick in target is rejected (interpolated field)", async () => {
+  const text = await toolsCall("ssh_run", { target: "host`whoami`", command: "echo hi" });
+  assert.ok(text.includes("must not contain backticks"), "backtick in target should fail validation");
+});
+
+test("tools/list includes extra module tools (ssh_compose, ssh_k8s)", async () => {
+  const res = await mcpRequest({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/list",
+    params: {}
+  });
+  const names = res.result?.tools?.map((t) => t.name) ?? [];
+  assert.ok(names.includes("ssh_compose") || names.includes("ssh_k8s"),
+    `expected extra module tools in list, got: ${names.join(", ").slice(0, 200)}`);
+});

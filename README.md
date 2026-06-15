@@ -39,8 +39,8 @@ SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Cl
 - **Parallel fleet ops** — `ssh_run_multi` runs across all profiles matching a group; `ssh_fleet_health` gives a dashboard in one call
 - **Encrypted credentials** — AES-256-GCM, device-specific key; passwords never appear in process args or model context
 - **Safety gates** — all mutating tools require `confirm: true`; critical ops (service restart, user deletion, bulk writes) require double confirmation; `dryRun: true` previews the exact bash script
-- **Zero external dependencies** — pure Node.js built-ins, no `npm install`
-- **Auto-install** — installer handles `curl`, `ssh`, `node`, `sshpass`, and MCP registration for every detected tool
+- **No runtime npm dependencies** — the MCP server uses only Node.js built-ins; no `npm install` or `node_modules` required at runtime
+- **Auto-install** — the installer (`install.sh` / `install.ps1`) may install system packages (curl, ssh, node, sshpass) and AI CLI integrations; those are installer-time dependencies, not runtime ones
 
 ---
 
@@ -73,7 +73,7 @@ The installer registers the MCP server with every detected tool (Claude Code, Cu
 
 ## Install
 
-**No prerequisites** — all dependencies are auto-installed.
+**No runtime prerequisites** — the MCP server runs on Node.js built-ins only. The installer auto-installs system tools (ssh, node, sshpass) as needed.
 
 ### macOS / Linux
 

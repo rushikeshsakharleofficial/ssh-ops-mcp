@@ -482,6 +482,7 @@ export function addProfile(name, profile) {
     ...(profile.jumpProfile && { jumpProfile: profile.jumpProfile }),
     ...(profile.jumpUser && { jumpUser: profile.jumpUser }),
     ...(profile.targetUser && { targetUser: profile.targetUser }),
+    ...(profile.localSwitchUser && { localSwitchUser: profile.localSwitchUser }),
     ...(Array.isArray(profile.extraArgs) && profile.extraArgs.length > 0 && { extraArgs: profile.extraArgs }),
     ...(profile.shell && ["bash", "powershell", "auto"].includes(profile.shell) && { shell: profile.shell })
   };
@@ -502,6 +503,46 @@ export function removeProfile(name) {
   deleteProfileEntry(name);
   clearOsCache(name);
   return listProfiles();
+}
+
+export function exportRawConfig() {
+  const dyn = readDynamic();
+  const index = readIndex();
+  const profiles = {};
+  for (const [name, data] of Object.entries(dyn.profiles)) {
+    profiles[name] = { ...data };
+  }
+  return {
+    profiles,
+    defaults: index.defaults || {},
+    ipGroups: index.ipGroups || {}
+  };
+}
+
+export function importRawConfig(raw) {
+  ensureProfilesDir();
+  for (const [name, data] of Object.entries(raw.profiles || {})) {
+    try {
+      assertSafeProfileName(name);
+      writeProfileFile(name, data);
+    } catch {}
+  }
+  const index = readIndex();
+  for (const name of Object.keys(raw.profiles || {})) {
+    try {
+      assertSafeProfileName(name);
+      if (!index.profileNames.includes(name)) index.profileNames.push(name);
+    } catch {}
+  }
+  if (raw.defaults && typeof raw.defaults === "object") {
+    index.defaults = { ...index.defaults, ...raw.defaults };
+  }
+  if (raw.ipGroups && typeof raw.ipGroups === "object") {
+    index.ipGroups = { ...index.ipGroups, ...raw.ipGroups };
+  }
+  writeIndex(index);
+  invalidateCache();
+  return Object.keys(raw.profiles || {}).length;
 }
 
 export function listJumpServers() {
@@ -844,7 +885,9 @@ export async function runSshCommand(input = {}) {
     input: stdin,
     timeoutMs,
     maxOutputBytes: Number(targetInfo.options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES),
-    env: processEnv
+    env: processEnv,
+    retries: typeof input.retries === "number" ? input.retries : 2,
+    retryDelayMs: typeof input.retryDelayMs === "number" ? input.retryDelayMs : 1500
   });
 
   // Detect SSH auth failure and mark the profile so the next call surfaces a clear error
@@ -2307,7 +2350,7 @@ async function runProcess(command, args, options = {}) {
   }
 }
 
-function shellQuote(value) {
+export function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 

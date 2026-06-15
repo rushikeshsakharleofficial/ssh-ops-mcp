@@ -182,11 +182,10 @@ async function handleFirewall(args) {
 // ─── ssh_ssl_cert ─────────────────────────────────────────────────────────────
 
 function buildSslCertScript(host, port) {
-  const hostJson = JSON.stringify(String(host));
   const portNum = port;
   return `set +e
 export LC_ALL=C
-_host=${hostJson}
+_host=${shellQuote(String(host))}
 _port=${portNum}
 
 if ! command -v openssl >/dev/null 2>&1; then
