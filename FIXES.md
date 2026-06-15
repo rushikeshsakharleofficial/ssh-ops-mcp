@@ -115,9 +115,17 @@ multiline strings, anchors, tags, flow mappings).
 ## Test Results
 
 ```
-ssh-mcp-protocol.test.mjs   5/5 pass
-ssh-ops.test.mjs            84/84 pass
-Total                       89/89 pass
+ssh-mcp-protocol.test.mjs   10/10 pass  (5 original + 5 new regression tests)
+ssh-ops.test.mjs            87/87 pass  (84 original + 3 new regression tests)
+Total                       97/97 pass
 ```
 
 MCP smoke test: 92 tools exposed (was ~30 before fix #1).
+
+### New regression tests cover
+
+- `validateInput`: newline in `command` accepted; backtick in `command` accepted (fix #2)
+- `validateInput`: newline/backtick in `target` still rejected (non-multiline field)
+- `tools/list` exposes `ssh_compose`, `ssh_k8s` from extra modules (fix #1)
+- `addProfile` persists `localSwitchUser` across write + read (fix #4)
+- `shellQuote` blocks `$(…)` and backtick injection payloads (fix #3)

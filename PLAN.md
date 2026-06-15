@@ -187,13 +187,26 @@ Tasks:
 
 ## Phase 13 — Test Matrix
 
-Status: DONE (existing tests pass; manual MCP verification done)
+Status: DONE (97 tests pass including targeted regression tests for each critical fix)
 
-- [x] `tools/list` exposes built-in tools — 5 MCP protocol tests pass.
-- [x] `tools/list` exposes extra module tools — verified 92 total tools including ssh_compose, ssh_k8s.
-- [x] `shellQuote` test in ssh-ops.test.mjs passes.
-- [x] `resolveTarget with localSwitchUser` test passes.
-- [x] All 89 existing unit tests pass.
+**Protocol tests (ssh-mcp-protocol.test.mjs) — 10 pass:**
+- [x] initialize returns correct server name and version.
+- [x] tools/list returns ≥20 tools.
+- [x] tools/list includes ssh_compose, ssh_k8s (extra module loader — fix #1).
+- [x] unknown method returns JSON-RPC -32601 error.
+- [x] bad JSON returns parse error -32700.
+- [x] validateInput: newline in `command` is accepted (fix #2 — multiline field exemption).
+- [x] validateInput: backtick in `command` is accepted (fix #2 — stdin-fed, not interpolated).
+- [x] validateInput: newline in `target` is rejected (non-multiline field still enforced).
+- [x] validateInput: backtick in `target` is rejected (interpolated field).
+- [x] ping returns empty result object.
+
+**Unit tests (ssh-ops.test.mjs) — 87 pass:**
+- [x] `addProfile` persists `localSwitchUser` — round-trip through resolveTarget (fix #4).
+- [x] `shellQuote` wraps `$(touch /tmp/pwned)` literally in single quotes — injection blocked (fix #3).
+- [x] `shellQuote` wraps backtick injection in single quotes (fix #3).
+- [x] `resolveTarget with localSwitchUser` in profile populates options.localSwitchUser.
+- [x] All 84 pre-existing unit tests still pass (no regressions).
 
 ---
 

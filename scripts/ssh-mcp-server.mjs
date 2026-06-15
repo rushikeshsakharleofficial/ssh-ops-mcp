@@ -1047,8 +1047,8 @@ function validateInput(toolName, params) {
     if (!MULTILINE_ALLOWED_FIELDS.has(k) && /[\r\n]/.test(v)) {
       return `Parameter "${k}" must not contain newlines.`;
     }
-    // Backticks disallowed everywhere (shell command substitution risk in interpolated contexts)
-    if (v.includes("`")) {
+    // Backticks disallowed in interpolated fields; safe in stdin-fed fields (command, content, etc.)
+    if (!MULTILINE_ALLOWED_FIELDS.has(k) && v.includes("`")) {
       return `Parameter "${k}" must not contain backticks.`;
     }
     if (v.includes("--%")) {
@@ -1280,7 +1280,7 @@ async function callTool(name, args) {
     const validErr = validateInput(name, args);
     if (validErr) return textResult(validErr, true);
     if (args.dryRun === true) return dryRunResult(name, args, args.command, args.target || args.host);
-    const result = await runSshCommand({ retries: args.retries ?? 0, retryDelayMs: args.retryDelayMs ?? 1500, ...args });
+    const result = await runSshCommand({ retries: args.retries ?? 2, retryDelayMs: args.retryDelayMs ?? 1500, ...args });
     return textResult(formatRunResult(result), result.exitCode !== 0);
   }
 

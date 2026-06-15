@@ -1004,3 +1004,37 @@ test("fileWriteScriptWindows base64 mode uses WriteAllBytes and FromBase64String
   const script = fileWriteScriptWindows("C:\\f.txt", "SGVsbG8=", { encoding: "base64" });
   assert.ok(script.includes("WriteAllBytes") || script.includes("FromBase64String"), "should handle base64 write");
 });
+
+test("addProfile persists localSwitchUser to disk", async () => {
+  const configPath = writeTempConfig({ profiles: {} });
+  const previousConfig = process.env.SSH_OPS_CONFIG;
+  process.env.SSH_OPS_CONFIG = configPath;
+  try {
+    const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=addprofile-lsu-${Date.now()}`;
+    const { addProfile, resolveTarget } = await import(moduleUrl);
+    addProfile("srv1", { host: "10.0.0.1", user: "ops", localSwitchUser: "admin" });
+    const target = resolveTarget({ target: "srv1" });
+    assert.equal(target.options.localSwitchUser, "admin", "localSwitchUser should survive addProfile + resolveTarget round-trip");
+  } finally {
+    if (previousConfig === undefined) delete process.env.SSH_OPS_CONFIG;
+    else process.env.SSH_OPS_CONFIG = previousConfig;
+  }
+});
+
+test("shellQuote blocks injection payload: $(touch /tmp/pwned) passed literally", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=shellquote-inject-${Date.now()}`;
+  const { shellQuote } = await import(moduleUrl);
+  const payload = "$(touch /tmp/pwned)";
+  const quoted = shellQuote(payload);
+  // Single-quoted strings: shell never expands $() inside them
+  assert.ok(quoted.startsWith("'") && quoted.endsWith("'"), "shellQuote must produce single-quoted string");
+  assert.equal(quoted, `'${payload}'`, "payload must be wrapped verbatim in single quotes");
+});
+
+test("shellQuote blocks backtick injection", async () => {
+  const moduleUrl = `${pathToFileURL(join(REPO_ROOT, "scripts/ssh-core.mjs")).href}?case=shellquote-backtick-${Date.now()}`;
+  const { shellQuote } = await import(moduleUrl);
+  const payload = "`id`";
+  const quoted = shellQuote(payload);
+  assert.ok(quoted.startsWith("'") && quoted.endsWith("'"), "shellQuote must produce single-quoted string");
+});
