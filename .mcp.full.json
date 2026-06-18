@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ssh-ops-full": {
+      "command": "node",
+      "args": [
+        "./scripts/ssh-mcp-server.mjs"
+      ]
+    }
+  }
+}
