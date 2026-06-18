@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "ssh-ops": {
+    "ssh-ops-full": {
       "command": "node",
       "args": [
-        "./scripts/ssh-mcp-server-lite.mjs"
+        "./scripts/ssh-mcp-server.mjs"
       ]
     }
   }
