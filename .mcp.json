@@ -3,7 +3,7 @@
     "ssh-ops": {
       "command": "node",
       "args": [
-        "./scripts/ssh-mcp-server.mjs"
+        "./scripts/ssh-mcp-server-lite.mjs"
       ]
     }
   }
