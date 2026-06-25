@@ -1,15 +1,5 @@
 // ssh-tools-perf.mjs — performance tools: ssh_perf, ssh_dmesg, ssh_tcpdump
-import { runSshCommand, formatRunResult } from "./ssh-core.mjs";
-
-function shellQuote(v) { return `'${String(v).replace(/'/g, "'\\''")}'`; }
-function textResult(text, isError = false) { return { content: [{ type: "text", text }], isError }; }
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({ dryRun: true, tool: toolName, target: target || args.target || args.host || "(default)", sudo: Boolean(args.sudo), command: command || null, note: "dryRun:true — nothing executed" }, null, 2));
-}
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
+import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
 

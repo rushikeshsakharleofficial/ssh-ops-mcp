@@ -10,8 +10,39 @@ export const PLUGIN_ROOT = resolve(SCRIPT_DIR, "..");
 
 const DEFAULT_CONNECT_TIMEOUT_SEC = 12;
 const DEFAULT_STRICT_HOST_KEY_CHECKING = "accept-new";
-const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 2_000_000;
+const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 32_768;
+const DEFAULT_MAX_STDOUT_LINES = 100;
+const DEFAULT_MAX_STDERR_LINES = 50;
+const DEFAULT_COMPACT_OUTPUT = true;
+
+
+const LIVE_LOG_BLOCKED = [
+  { pattern: /\btail\s+-f\b/,                  reason: "tail -f (live stream) blocked — use ssh_tail with line limit" },
+  { pattern: /\bjournalctl\b(?!.*-n\s*\d)(?!.*--lines\s*\d)/,
+                                                 reason: "unbounded journalctl blocked — add -n 100 or --since '1 hour ago'" },
+  { pattern: /\bjournalctl\s+.*-f\b/,            reason: "journalctl -f (live stream) blocked" },
+  { pattern: /\bdocker\s+logs\b(?!.*--tail\s*\d)(?!.*-n\s*\d)/,
+                                                 reason: "unbounded docker logs blocked — add --tail 200" },
+  { pattern: /\bdocker\s+logs\s+.*-f\b/,         reason: "docker logs -f (live stream) blocked" },
+  { pattern: /\bkubectl\s+logs\b(?!.*--tail\s*\d)(?!.*-n\s*\d)/,
+                                                 reason: "unbounded kubectl logs blocked — add --tail=200" },
+  { pattern: /\bkubectl\s+logs\s+.*-f\b/,        reason: "kubectl logs -f (live stream) blocked" },
+  { pattern: /\bcat\s+\/var\/log\b/,             reason: "cat /var/log/* blocked — use ssh_log_search or tail -n 100" },
+  { pattern: /\bcat\s+\S+\.log\b/,               reason: "cat *.log blocked — use ssh_log_search or tail -n 100" },
+  { pattern: /\bfind\s+\/\s/,                    reason: "find / blocked — specify a subdirectory" },
+  { pattern: /\bls\s+-[a-zA-Z]*R\s*\//,          reason: "ls -R / blocked — specify a subdirectory" },
+  { pattern: /\bgrep\s+.*-[a-zA-Z]*r\s*\//,      reason: "grep -r / blocked — specify a subdirectory" },
+  { pattern: /\bwatch\b/,                         reason: "watch blocked (live stream) — run command once with explicit interval" },
+  { pattern: /\bwhile\s+true\b/,                 reason: "while true blocked (infinite loop)" },
+];
+
+export function checkBlockedCommand(cmd) {
+  for (const { pattern, reason } of LIVE_LOG_BLOCKED) {
+    if (pattern.test(cmd)) return reason;
+  }
+  return null;
+}
 const ROOT_CONFIG_FILES = [
   "ssh-ops.config.yaml",
   "ssh-ops.config.yml",
@@ -801,10 +832,20 @@ async function resolveMode(input, targetInfo) {
   }
 }
 
+function _blockedResult(targetInfo, reason) {
+  return { stdout: "", stderr: `Command blocked by ssh-ops token guard: ${reason}`,
+    exitCode: 1, timedOut: false, truncated: false,
+    target: targetInfo.target, targetLabel: targetInfo.targetLabel,
+    remoteJump: null, sudo: false, durationMs: 0 };
+}
+
 export async function runSshCommand(input = {}) {
   if (!input.command || typeof input.command !== "string") {
     throw new Error("command is required.");
   }
+
+  const blocked = checkBlockedCommand(input.command);
+  if (blocked) return _blockedResult(resolveTarget(input), blocked);
 
   const targetInfo = resolveTarget(input);
   // Enforce allowedCommands policy if defined on the resolved profile
@@ -1350,27 +1391,41 @@ export function logSearchScript({ unit, pattern, lines = 100, since, path: logPa
   return parts.join("\n") + "\n";
 }
 
-export function formatRunResult(result) {
+export function formatRunResult(result, opts = {}) {
+  const { maxStdoutLines = DEFAULT_MAX_STDOUT_LINES, maxStderrLines = DEFAULT_MAX_STDERR_LINES, compact = DEFAULT_COMPACT_OUTPUT } = opts;
+  const ansiRe = /\x1b\[[0-9;]*[a-zA-Z]|[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]/g;
+  const cap = (str, max) => {
+    const s = (str || "").replace(ansiRe, "");
+    const ls = s.split("\n");
+    return ls.length <= max ? { text: s, truncated: false, originalLines: ls.length }
+      : { text: ls.slice(0, max).join("\n"), truncated: true, originalLines: ls.length };
+  };
+  const cappedOut = cap(result.stdout, maxStdoutLines);
+  const cappedErr = cap(result.stderr, maxStderrLines);
+
   const lines = [];
   lines.push(`target: ${result.targetLabel || result.target}`);
   lines.push(`exitCode: ${result.exitCode}`);
-  lines.push(`durationMs: ${result.durationMs}`);
+  if (!compact) lines.push(`durationMs: ${result.durationMs}`);
   if (result.timedOut) lines.push("timedOut: true");
-  if (result.stdoutTruncated) lines.push("stdoutTruncated: true");
-  if (result.stderrTruncated) lines.push("stderrTruncated: true");
-  if (result.authFailed) {
-    lines.push("");
-    lines.push("⚠ AUTH FAILURE — credentials stored for this profile no longer work.");
-    lines.push("  Update via ssh_add_profile / ssh_add_jump with new password or identityFile.");
-    lines.push("  To see available local SSH keys: ssh_list_keys");
+  if (result.stdoutTruncated || cappedOut.truncated) {
+    lines.push(`stdoutTruncated: true (showed ${Math.min(cappedOut.originalLines, maxStdoutLines)}/${cappedOut.originalLines} lines — narrow command or add | head -n 50)`);
   }
-  lines.push("");
-  lines.push("----- stdout -----");
-  lines.push(result.stdout || "");
-  if (result.stderr) {
+  if (result.stderrTruncated || cappedErr.truncated) {
+    lines.push(`stderrTruncated: true (showed ${Math.min(cappedErr.originalLines, maxStderrLines)}/${cappedErr.originalLines} lines)`);
+  }
+  if (result.authFailed) {
+    lines.push("AUTH FAILURE: update profile via ssh_add_profile. See ssh_list_keys.");
+  }
+  if (cappedOut.text) {
+    lines.push("");
+    lines.push("----- stdout -----");
+    lines.push(cappedOut.text);
+  }
+  if (cappedErr.text) {
     lines.push("");
     lines.push("----- stderr -----");
-    lines.push(result.stderr);
+    lines.push(cappedErr.text);
   }
   return lines.join("\n");
 }
@@ -2356,4 +2411,24 @@ export function shellQuote(value) {
 
 export function psQuote(v) {
   return `'${String(v).replace(/'/g, "''")}'`;
+}
+
+export function textResult(text, isError = false) {
+  return { content: [{ type: "text", text }], isError };
+}
+
+export function dryRunResult(toolName, args, command, target) {
+  return textResult(JSON.stringify({
+    dryRun: true,
+    tool: toolName,
+    target: target || args.target || args.host || "(default)",
+    sudo: Boolean(args.sudo),
+    command: command || null,
+    note: "dryRun:true — nothing executed"
+  }, null, 2));
+}
+
+export function requireConfirm(toolName, args) {
+  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
+  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
 }

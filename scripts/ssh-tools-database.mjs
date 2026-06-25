@@ -1,15 +1,5 @@
 // ssh-tools-database.mjs — database operations: ssh_db
-import { runSshCommand, formatRunResult } from "./ssh-core.mjs";
-
-function shellQuote(v) { return `'${String(v).replace(/'/g, "'\\''")}'`; }
-function textResult(text, isError = false) { return { content: [{ type: "text", text }], isError }; }
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({ dryRun: true, tool: toolName, target: target || args.target || args.host || "(default)", sudo: Boolean(args.sudo), command: command || null, note: "dryRun:true — nothing executed" }, null, 2));
-}
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
+import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
 const WRITE_KEYWORDS = /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|MERGE)\b/i;
 const BANNED_CHARS = /[\r\n\x00]/;

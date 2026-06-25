@@ -1,21 +1,11 @@
 // ssh-tools-fleet.mjs — fleet tools: ssh_fleet_health, ssh_anomaly, ssh_change_tracker
-import { runSshCommand, formatRunResult, runMultiSshCommand, listProfiles } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, runMultiSshCommand, listProfiles, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ANOMALY_STORE = join(PLUGIN_ROOT, "ssh-ops-anomaly.json");
-
-function shellQuote(v) { return `'${String(v).replace(/'/g, "'\\''")}'`; }
-function textResult(text, isError = false) { return { content: [{ type: "text", text }], isError }; }
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({ dryRun: true, tool: toolName, target: target || args.target || args.host || "(default)", sudo: Boolean(args.sudo), command: command || null, note: "dryRun:true — nothing executed" }, null, 2));
-}
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
 
 function validatePath(path) {
   if (typeof path !== "string") return "path must be a string";

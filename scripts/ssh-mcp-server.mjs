@@ -63,6 +63,43 @@ import net from "node:net";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as pathResolve, sep as pathSep } from "node:path";
 
+// ── Profile-based tool filtering ─────────────────────────────────────────────
+const _profileArg = (() => {
+  const idx = process.argv.indexOf("--profile");
+  if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1].toLowerCase();
+  return process.env.SSH_OPS_PROFILE || "full";
+})();
+
+const LITE_TOOLS = new Set([
+  "ssh_run", "ssh_log_search", "ssh_tail", "ssh_health_report",
+  "ssh_disk_report", "ssh_profiles"
+]);
+const READONLY_TOOLS = new Set([
+  ...LITE_TOOLS,
+  "ssh_inventory", "ssh_metrics", "ssh_memory_report", "ssh_file_read",
+  "ssh_dmesg", "ssh_port_scan", "ssh_ssl_cert", "ssh_audit", "ssh_intrusion_check"
+]);
+
+function activeToolFilter(name) {
+  if (_profileArg === "lite") return LITE_TOOLS.has(name);
+  if (_profileArg === "readonly") return READONLY_TOOLS.has(name);
+  return true; // full
+}
+
+const COMPACT_SKILL_INSTRUCTIONS = `\
+# ssh-ops MCP — token-safe mode
+
+Profile: ${_profileArg} | Defaults: timeout=20s output=32KB stdout=100lines stderr=50lines
+
+## Rules
+- Use ssh_run for bounded commands only. Add | head -n 50 to cap output.
+- Use ssh_log_search instead of cat *.log or journalctl (auto-bounded).
+- Use ssh_tail with maxLines (not tail -f).
+- Use ssh_health_report / ssh_disk_report for status checks.
+- Blocked: tail -f, journalctl -f, docker logs -f, kubectl logs -f, unbounded logs, find /, ls -R /, grep -r /, watch, while true.
+- /compact after any ssh batch. /clear when switching tasks.
+`;
+
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_VERSION = (() => {
   try {
@@ -917,9 +954,12 @@ function getTools() {
   const extra = _extraModules.flatMap(m => Array.isArray(m.toolDefs) ? m.toolDefs : []);
   try {
     const cfg = getConfig();
-    if (cfg.exposeProfiles === false) return [...allTools, ...extra];
+    if (cfg.exposeProfiles === false) {
+      return [...allTools, ...extra].filter(t => activeToolFilter(t.name));
+    }
   } catch {}
-  return [profilesTool, ...allTools, ...extra];
+  const base = [profilesTool, ...allTools, ...extra];
+  return base.filter(t => activeToolFilter(t.name));
 }
 
 function isTopologyExposed() {
@@ -929,10 +969,14 @@ function isTopologyExposed() {
 let _skillInstructions = null;
 function getSkillInstructions() {
   if (_skillInstructions !== null) return _skillInstructions;
+  if (_profileArg === "lite" || _profileArg === "readonly") {
+    _skillInstructions = COMPACT_SKILL_INSTRUCTIONS;
+    return _skillInstructions;
+  }
   try {
     _skillInstructions = readFileSync(join(PLUGIN_ROOT, "skills", "ssh-ops", "SKILL.md"), "utf8").trim();
   } catch {
-    _skillInstructions = "";
+    _skillInstructions = COMPACT_SKILL_INSTRUCTIONS;
   }
   return _skillInstructions;
 }

@@ -1,24 +1,6 @@
 // ssh-tools-windows.mjs — Windows/PowerShell tools for ssh-ops
-import { runSshCommand, formatRunResult, psQuote } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, psQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
-function textResult(text, isError = false) {
-  return { content: [{ type: "text", text }], isError };
-}
-
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({
-    dryRun: true,
-    tool: toolName,
-    target: target || args.target || args.host || "(default)",
-    command: command || null,
-    note: "dryRun:true — nothing executed"
-  }, null, 2));
-}
-
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
 
 function validateWinServiceName(name) {
   return typeof name === "string" && /^[A-Za-z0-9._-]{1,256}$/.test(name);

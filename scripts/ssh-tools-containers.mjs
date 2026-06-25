@@ -1,22 +1,5 @@
 // ssh-tools-containers.mjs — container tools: ssh_compose, ssh_k8s
-import { runSshCommand, formatRunResult } from "./ssh-core.mjs";
-
-function shellQuote(v) { return `'${String(v).replace(/'/g, "'\\''")}'`; }
-function textResult(text, isError = false) { return { content: [{ type: "text", text }], isError }; }
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({
-    dryRun: true,
-    tool: toolName,
-    target: target || args.target || args.host || "(default)",
-    sudo: Boolean(args.sudo),
-    command: command || null,
-    note: "dryRun:true — nothing executed"
-  }, null, 2));
-}
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
+import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
 function hasBadChars(v) {
   return /[\r\n\x00]/.test(String(v));

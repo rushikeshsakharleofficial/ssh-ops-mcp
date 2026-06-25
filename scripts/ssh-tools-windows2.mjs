@@ -1,24 +1,6 @@
 // ssh-tools-windows2.mjs — Windows tools: ssh_win_wsl, ssh_win_iis
-import { runSshCommand, formatRunResult, psQuote } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, psQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
-function textResult(text, isError = false) {
-  return { content: [{ type: "text", text }], isError };
-}
-
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({
-    dryRun: true,
-    tool: toolName,
-    target: target || args.target || args.host || "(default)",
-    command: command || null,
-    note: "dryRun:true — nothing executed"
-  }, null, 2));
-}
-
-function requireConfirm(toolName, args) {
-  const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
-}
 
 function validateDistroOrSiteName(name) {
   return typeof name === "string" && /^[a-zA-Z0-9._\s-]+$/.test(name) && name.length > 0 && name.length <= 256;
