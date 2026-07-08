@@ -129,15 +129,15 @@ export async function handleTool(name, args) {
     const repoPathQ = shellQuote(args.repoPath);
     const branchQ = branch ? shellQuote(branch) : '""';
 
-    const serviceRestartLines = services.map(s => {
+    function restartLine(s, { quiet }) {
       const sq = shellQuote(s);
-      return `  echo "Restarting ${s}..."; sudo -n systemctl restart ${sq} 2>&1 && echo "  OK" || echo "  FAILED"`;
-    }).join("\n");
+      return quiet
+        ? `  sudo -n systemctl restart ${sq} 2>&1 || true`
+        : `  echo "Restarting ${s}..."; sudo -n systemctl restart ${sq} 2>&1 && echo "  OK" || echo "  FAILED"`;
+    }
 
-    const rollbackServiceLines = services.map(s => {
-      const sq = shellQuote(s);
-      return `  sudo -n systemctl restart ${sq} 2>&1 || true`;
-    }).join("\n");
+    const serviceRestartLines = services.map(s => restartLine(s, { quiet: false })).join("\n");
+    const rollbackServiceLines = services.map(s => restartLine(s, { quiet: true })).join("\n");
 
     // buildCmd via heredoc
     let buildCmdBlock = "";
@@ -277,8 +277,7 @@ fi`;
 
     let findBackupBlock;
     if (args.backupFile) {
-      const bfQ = shellQuote(args.backupFile);
-      findBackupBlock = `_backup="${backupDir}/${String(args.backupFile).replace(/'/g, "'\\''")}"`;
+      findBackupBlock = `_backup=${shellQuote(`${backupDir}/${args.backupFile}`)}`;
     } else {
       findBackupBlock = `_backup=$(ls -t ${backupDirQ}/*.tar.gz 2>/dev/null | head -1)`;
     }

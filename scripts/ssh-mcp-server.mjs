@@ -39,7 +39,10 @@ import {
   fileReadScriptWindows,
   fileWriteScriptWindows,
   filePatchScriptWindows,
-  shellQuote
+  shellQuote,
+  textResult,
+  requireConfirm,
+  dryRunResult
 } from "./ssh-core.mjs";
 const _extraModules = await (async () => {
   const scriptsDir = join(PLUGIN_ROOT, "scripts");
@@ -2277,34 +2280,6 @@ function checkRateLimit(target, limitPerMin) {
   timestamps.push(now);
   _rateLimitWindows.set(key, timestamps);
   return null;
-}
-
-function textResult(text, isError = false) {
-  return {
-    content: [
-      {
-        type: "text",
-        text
-      }
-    ],
-    isError
-  };
-}
-
-function requireConfirm(toolName, args) {
-  const reasonNote = args.reason ? ` Stated reason: "${args.reason}".` : "";
-  return textResult(`${toolName} requires confirm:true to execute.${reasonNote}`, true);
-}
-
-function dryRunResult(toolName, args, command, target) {
-  return textResult(JSON.stringify({
-    dryRun: true,
-    tool: toolName,
-    target: target || args.target || args.host || "(default)",
-    sudo: Boolean(args.sudo),
-    command: command || null,
-    note: "dryRun:true — nothing executed"
-  }, null, 2));
 }
 
 function unifiedDiff(labelA, labelB, textA, textB, context = 3) {

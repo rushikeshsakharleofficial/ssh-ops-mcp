@@ -1,5 +1,5 @@
 // ssh-tools-security2.mjs — security tools: ssh_authorized_keys, ssh_fail2ban, ssh_audit, ssh_intrusion_check
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { shellQuote, textResult, requireConfirm, runToolAction } from "./ssh-core.mjs";
 
 function rejectControlChars(val, name) {
   if (/[\r\n\x00]/.test(val)) throw new Error(`${name} must not contain newline or null bytes`);
@@ -112,11 +112,11 @@ async function handleAuthorizedKeys(args) {
     return textResult(`ssh_authorized_keys: ${e.message}`, true);
   }
 
-  if (args.dryRun) return dryRunResult("ssh_authorized_keys", args, command);
-
   const useSudo = args.sudo === true || (args.user && args.user !== "" && args.user !== undefined);
-  const result = await runSshCommand({ ...args, command, mode: "bash", sudo: Boolean(useSudo) });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { ...args, command, mode: "bash", sudo: Boolean(useSudo) },
+    { toolName: "ssh_authorized_keys", args, dryRunCommand: command }
+  );
 }
 
 // ─── ssh_fail2ban ─────────────────────────────────────────────────────────────
@@ -192,16 +192,16 @@ async function handleFail2ban(args) {
     return textResult(`ssh_fail2ban: ${e.message}`, true);
   }
 
-  if (args.dryRun) return dryRunResult("ssh_fail2ban", args, command);
-
-  const result = await runSshCommand({
-    ...args,
-    command,
-    mode: "bash",
-    sudo: args.sudo !== false,
-    ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    {
+      ...args,
+      command,
+      mode: "bash",
+      sudo: args.sudo !== false,
+      ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
+    },
+    { toolName: "ssh_fail2ban", args, dryRunCommand: command }
+  );
 }
 
 // ─── ssh_audit ────────────────────────────────────────────────────────────────
@@ -253,16 +253,16 @@ echo "=== Audit Complete ==="
 async function handleAudit(args) {
   const command = buildAuditScript();
 
-  if (args.dryRun) return dryRunResult("ssh_audit", args, command);
-
-  const result = await runSshCommand({
-    ...args,
-    command,
-    mode: "bash",
-    sudo: args.sudo !== false,
-    ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    {
+      ...args,
+      command,
+      mode: "bash",
+      sudo: args.sudo !== false,
+      ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
+    },
+    { toolName: "ssh_audit", args, dryRunCommand: command }
+  );
 }
 
 // ─── ssh_intrusion_check ──────────────────────────────────────────────────────
@@ -333,16 +333,16 @@ async function handleIntrusionCheck(args) {
 
   const command = buildIntrusionScript(hours);
 
-  if (args.dryRun) return dryRunResult("ssh_intrusion_check", args, command);
-
-  const result = await runSshCommand({
-    ...args,
-    command,
-    mode: "bash",
-    sudo: args.sudo !== false,
-    ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    {
+      ...args,
+      command,
+      mode: "bash",
+      sudo: args.sudo !== false,
+      ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {})
+    },
+    { toolName: "ssh_intrusion_check", args, dryRunCommand: command }
+  );
 }
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────

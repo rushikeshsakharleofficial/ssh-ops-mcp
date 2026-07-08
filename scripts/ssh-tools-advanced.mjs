@@ -1,5 +1,5 @@
 // ssh-tools-advanced.mjs — advanced tools: ssh_template, ssh_snapshot, ssh_compare
-import { runSshCommand, formatRunResult, fileWriteScript, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, fileWriteScript, textResult, requireConfirm } from "./ssh-core.mjs";
 
 const SNAPSHOT_SCRIPT = `set +e
 export LC_ALL=C

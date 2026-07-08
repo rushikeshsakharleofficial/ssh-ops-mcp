@@ -10,24 +10,10 @@ function rejectBanned(val, label) {
   }
 }
 
-function validateDbName(val, label) {
+function validatePattern(val, label, re) {
   if (val === undefined || val === null || val === "") return;
-  if (!/^[a-zA-Z0-9_-]+$/.test(String(val))) {
-    throw new Error(`${label} must be alphanumeric + underscore/hyphen only.`);
-  }
-}
-
-function validateDbUser(val, label) {
-  if (val === undefined || val === null || val === "") return;
-  if (!/^[a-zA-Z0-9_.-]+$/.test(String(val))) {
-    throw new Error(`${label} must match /^[a-zA-Z0-9_.-]+$/.`);
-  }
-}
-
-function validateDbHost(val, label) {
-  if (val === undefined || val === null || val === "") return;
-  if (!/^[a-zA-Z0-9._-]+$/.test(String(val))) {
-    throw new Error(`${label} must match /^[a-zA-Z0-9._-]+$/.`);
+  if (!re.test(String(val))) {
+    throw new Error(`${label} must match ${re}.`);
   }
 }
 
@@ -58,113 +44,77 @@ fi
 echo "Detected engine: $_engine"`.trim();
 }
 
-function buildMysqlCmd(action, { dbHost, port, dbUser, db }) {
-  const h = shellQuote(dbHost);
-  const u = dbUser ? `-u ${shellQuote(dbUser)}` : "";
-  const p = port ? `-P ${shellQuote(String(port))}` : "";
-  const d = db ? shellQuote(db) : "";
-  switch (action) {
-    case "query":
-      return `mysql -h ${h} ${p} ${u} --batch -e "$_DB_QUERY" ${d} 2>&1`;
-    case "list-dbs":
-      return `mysql -h ${h} ${u} --batch -e "SHOW DATABASES;" 2>&1`;
-    case "list-tables":
-      return `mysql -h ${h} ${u} --batch -e "SHOW TABLES;" ${d} 2>&1`;
-    case "stats":
-      return `mysql -h ${h} ${u} --batch -e "SHOW GLOBAL STATUS LIKE 'Threads_connected'; SHOW GLOBAL STATUS LIKE 'Queries'; SELECT VERSION();" 2>&1`;
-    case "ping":
-      return `mysqladmin -h ${h} ${u} ping 2>&1`;
-    case "slow-queries":
-      return `mysql -h ${h} ${u} --batch -e "SHOW GLOBAL STATUS LIKE 'Slow_queries'; SELECT * FROM information_schema.PROCESSLIST WHERE TIME > 5;" 2>&1`;
-    default:
-      throw new Error(`Unknown action for mysql: ${action}`);
+const ENGINE_COMMANDS = {
+  mysql: {
+    vars: ({ dbHost, port, dbUser, db }) => ({
+      h: shellQuote(dbHost),
+      u: dbUser ? `-u ${shellQuote(dbUser)}` : "",
+      p: port ? `-P ${shellQuote(String(port))}` : "",
+      d: db ? shellQuote(db) : ""
+    }),
+    query:        ({ h, p, u, d }) => `mysql -h ${h} ${p} ${u} --batch -e "$_DB_QUERY" ${d} 2>&1`,
+    "list-dbs":   ({ h, u }) => `mysql -h ${h} ${u} --batch -e "SHOW DATABASES;" 2>&1`,
+    "list-tables":({ h, u, d }) => `mysql -h ${h} ${u} --batch -e "SHOW TABLES;" ${d} 2>&1`,
+    stats:        ({ h, u }) => `mysql -h ${h} ${u} --batch -e "SHOW GLOBAL STATUS LIKE 'Threads_connected'; SHOW GLOBAL STATUS LIKE 'Queries'; SELECT VERSION();" 2>&1`,
+    ping:         ({ h, u }) => `mysqladmin -h ${h} ${u} ping 2>&1`,
+    "slow-queries": ({ h, u }) => `mysql -h ${h} ${u} --batch -e "SHOW GLOBAL STATUS LIKE 'Slow_queries'; SELECT * FROM information_schema.PROCESSLIST WHERE TIME > 5;" 2>&1`
+  },
+  postgres: {
+    vars: ({ dbHost, port, dbUser, db }) => ({
+      h: shellQuote(dbHost),
+      u: dbUser ? `-U ${shellQuote(dbUser)}` : "",
+      p: port ? `-p ${shellQuote(String(port))}` : "",
+      d: db ? `-d ${shellQuote(db)}` : ""
+    }),
+    query:        ({ h, p, u, d }) => `psql -h ${h} ${p} ${u} ${d} -c "$_DB_QUERY" 2>&1`,
+    "list-dbs":   ({ h, u }) => `psql -h ${h} ${u} -l 2>&1`,
+    "list-tables":({ h, u, d }) => `psql -h ${h} ${u} ${d} -c "\\dt" 2>&1`,
+    stats:        ({ h, u, d }) => `psql -h ${h} ${u} ${d} -c "SELECT version(); SELECT count(*) FROM pg_stat_activity;" 2>&1`,
+    ping:         ({ h, p }) => `pg_isready -h ${h} ${p} 2>&1`,
+    "slow-queries": ({ h, u, d }) => `psql -h ${h} ${u} ${d} -c "SELECT pid,now()-pg_stat_activity.query_start AS duration,query,state FROM pg_stat_activity WHERE now()-pg_stat_activity.query_start > interval '5 seconds';" 2>&1`
+  },
+  redis: {
+    vars: ({ dbHost, port }) => ({
+      h: shellQuote(dbHost),
+      p: port ? shellQuote(String(port)) : shellQuote("6379")
+    }),
+    query:        ({ h, p }) => `redis-cli -h ${h} -p ${p} $_DB_QUERY 2>&1`,
+    "list-dbs":   ({ h, p }) => `redis-cli -h ${h} -p ${p} INFO keyspace 2>&1`,
+    "list-tables":({ h, p }) => `redis-cli -h ${h} -p ${p} INFO keyspace 2>&1`,
+    stats:        ({ h, p }) => `redis-cli -h ${h} -p ${p} INFO server | head -20 && redis-cli -h ${h} -p ${p} INFO stats | grep -E 'connected|commands|hits|misses' 2>&1`,
+    ping:         ({ h, p }) => `redis-cli -h ${h} -p ${p} PING 2>&1`,
+    "slow-queries": ({ h, p }) => `redis-cli -h ${h} -p ${p} SLOWLOG GET 10 2>&1`
+  },
+  mongodb: {
+    vars: ({ dbHost, port, db }) => ({
+      h: shellQuote(dbHost),
+      p: port ? shellQuote(String(port)) : shellQuote("27017"),
+      d: db ? shellQuote(db) : shellQuote("admin")
+    }),
+    query:        ({ h, p, d }) => `mongosh --host ${h} --port ${p} ${d} --eval "$_DB_QUERY" --quiet 2>&1`,
+    "list-dbs":   ({ h, p }) => `mongosh --host ${h} --port ${p} --eval "db.adminCommand({listDatabases:1}).databases.map(d=>d.name+' ('+d.sizeOnDisk+' bytes)').join('\\n')" --quiet 2>&1`,
+    "list-tables":({ h, p, d }) => `mongosh --host ${h} --port ${p} ${d} --eval "db.getCollectionNames().join('\\n')" --quiet 2>&1`,
+    stats:        ({ h, p }) => `mongosh --host ${h} --port ${p} --eval "JSON.stringify(db.serverStatus().connections); JSON.stringify(db.serverStatus().opcounters)" --quiet 2>&1`,
+    ping:         ({ h, p }) => `mongosh --host ${h} --port ${p} --eval "db.adminCommand({ping:1})" --quiet 2>&1`,
+    "slow-queries": ({ h, p }) => `mongosh --host ${h} --port ${p} --eval "db.adminCommand({currentOp:1,active:true,secs_running:{\\$gte:5}})" --quiet 2>&1`
+  },
+  sqlite: {
+    vars: ({ sqliteFile }) => ({ f: shellQuote(sqliteFile) }),
+    query:        ({ f }) => `sqlite3 ${f} "$_DB_QUERY" 2>&1`,
+    "list-dbs":   ({ f }) => `echo "SQLite single-file DB: ${f}" 2>&1`,
+    "list-tables":({ f }) => `sqlite3 ${f} ".tables" 2>&1`,
+    stats:        ({ f }) => `sqlite3 ${f} "SELECT COUNT(*) as tables FROM sqlite_master WHERE type='table'; PRAGMA page_count; PRAGMA page_size;" 2>&1`,
+    ping:         ({ f }) => `sqlite3 ${f} "SELECT 1;" 2>&1`,
+    "slow-queries": () => `echo "SQLite does not track slow queries." 2>&1`
   }
-}
+};
 
-function buildPostgresCmd(action, { dbHost, port, dbUser, db }) {
-  const h = shellQuote(dbHost);
-  const u = dbUser ? `-U ${shellQuote(dbUser)}` : "";
-  const p = port ? `-p ${shellQuote(String(port))}` : "";
-  const d = db ? `-d ${shellQuote(db)}` : "";
-  switch (action) {
-    case "query":
-      return `psql -h ${h} ${p} ${u} ${d} -c "$_DB_QUERY" 2>&1`;
-    case "list-dbs":
-      return `psql -h ${h} ${u} -l 2>&1`;
-    case "list-tables":
-      return `psql -h ${h} ${u} ${d} -c "\\dt" 2>&1`;
-    case "stats":
-      return `psql -h ${h} ${u} ${d} -c "SELECT version(); SELECT count(*) FROM pg_stat_activity;" 2>&1`;
-    case "ping":
-      return `pg_isready -h ${h} ${p} 2>&1`;
-    case "slow-queries":
-      return `psql -h ${h} ${u} ${d} -c "SELECT pid,now()-pg_stat_activity.query_start AS duration,query,state FROM pg_stat_activity WHERE now()-pg_stat_activity.query_start > interval '5 seconds';" 2>&1`;
-    default:
-      throw new Error(`Unknown action for postgres: ${action}`);
-  }
-}
-
-function buildRedisCmd(action, { dbHost, port }) {
-  const h = shellQuote(dbHost);
-  const p = port ? shellQuote(String(port)) : shellQuote("6379");
-  switch (action) {
-    case "query":
-      return `redis-cli -h ${h} -p ${p} $_DB_QUERY 2>&1`;
-    case "list-dbs":
-      return `redis-cli -h ${h} -p ${p} INFO keyspace 2>&1`;
-    case "list-tables":
-      return `redis-cli -h ${h} -p ${p} INFO keyspace 2>&1`;
-    case "stats":
-      return `redis-cli -h ${h} -p ${p} INFO server | head -20 && redis-cli -h ${h} -p ${p} INFO stats | grep -E 'connected|commands|hits|misses' 2>&1`;
-    case "ping":
-      return `redis-cli -h ${h} -p ${p} PING 2>&1`;
-    case "slow-queries":
-      return `redis-cli -h ${h} -p ${p} SLOWLOG GET 10 2>&1`;
-    default:
-      throw new Error(`Unknown action for redis: ${action}`);
-  }
-}
-
-function buildMongoCmd(action, { dbHost, port, db }) {
-  const h = shellQuote(dbHost);
-  const p = port ? shellQuote(String(port)) : shellQuote("27017");
-  const d = db ? shellQuote(db) : shellQuote("admin");
-  switch (action) {
-    case "query":
-      return `mongosh --host ${h} --port ${p} ${d} --eval "$_DB_QUERY" --quiet 2>&1`;
-    case "list-dbs":
-      return `mongosh --host ${h} --port ${p} --eval "db.adminCommand({listDatabases:1}).databases.map(d=>d.name+' ('+d.sizeOnDisk+' bytes)').join('\\n')" --quiet 2>&1`;
-    case "list-tables":
-      return `mongosh --host ${h} --port ${p} ${d} --eval "db.getCollectionNames().join('\\n')" --quiet 2>&1`;
-    case "stats":
-      return `mongosh --host ${h} --port ${p} --eval "JSON.stringify(db.serverStatus().connections); JSON.stringify(db.serverStatus().opcounters)" --quiet 2>&1`;
-    case "ping":
-      return `mongosh --host ${h} --port ${p} --eval "db.adminCommand({ping:1})" --quiet 2>&1`;
-    case "slow-queries":
-      return `mongosh --host ${h} --port ${p} --eval "db.adminCommand({currentOp:1,active:true,secs_running:{\\$gte:5}})" --quiet 2>&1`;
-    default:
-      throw new Error(`Unknown action for mongodb: ${action}`);
-  }
-}
-
-function buildSqliteCmd(action, { sqliteFile }) {
-  const f = shellQuote(sqliteFile);
-  switch (action) {
-    case "query":
-      return `sqlite3 ${f} "$_DB_QUERY" 2>&1`;
-    case "list-dbs":
-      return `echo "SQLite single-file DB: ${f}" 2>&1`;
-    case "list-tables":
-      return `sqlite3 ${f} ".tables" 2>&1`;
-    case "stats":
-      return `sqlite3 ${f} "SELECT COUNT(*) as tables FROM sqlite_master WHERE type='table'; PRAGMA page_count; PRAGMA page_size;" 2>&1`;
-    case "ping":
-      return `sqlite3 ${f} "SELECT 1;" 2>&1`;
-    case "slow-queries":
-      return `echo "SQLite does not track slow queries." 2>&1`;
-    default:
-      throw new Error(`Unknown action for sqlite: ${action}`);
-  }
+function buildEngineCmd(engine, action, params) {
+  const table = ENGINE_COMMANDS[engine];
+  if (!table) throw new Error(`Unknown engine: ${engine}`);
+  const fn = table[action];
+  if (!fn) throw new Error(`Unknown action for ${engine}: ${action}`);
+  return fn(table.vars(params));
 }
 
 function buildScript(engineExpr, action, params, query) {
@@ -174,11 +124,11 @@ function buildScript(engineExpr, action, params, query) {
 
   // For auto-detect, emit detection block then branch per engine
   if (engineExpr === "auto") {
-    const mysql = buildMysqlCmd(action, params);
-    const postgres = buildPostgresCmd(action, params);
-    const redis = buildRedisCmd(action, params);
-    const mongo = buildMongoCmd(action, params);
-    const sqlite = buildSqliteCmd(action, params);
+    const mysql = buildEngineCmd("mysql", action, params);
+    const postgres = buildEngineCmd("postgres", action, params);
+    const redis = buildEngineCmd("redis", action, params);
+    const mongo = buildEngineCmd("mongodb", action, params);
+    const sqlite = buildEngineCmd("sqlite", action, params);
 
     return `set +e
 ${queryExport}
@@ -198,15 +148,7 @@ case "$_engine" in
 esac`;
   }
 
-  let clientCmd;
-  switch (engineExpr) {
-    case "mysql":    clientCmd = buildMysqlCmd(action, params); break;
-    case "postgres": clientCmd = buildPostgresCmd(action, params); break;
-    case "redis":    clientCmd = buildRedisCmd(action, params); break;
-    case "mongodb":  clientCmd = buildMongoCmd(action, params); break;
-    case "sqlite":   clientCmd = buildSqliteCmd(action, params); break;
-    default:         throw new Error(`Unknown engine: ${engineExpr}`);
-  }
+  const clientCmd = buildEngineCmd(engineExpr, action, params);
 
   return `set +e
 ${queryExport}
@@ -264,9 +206,9 @@ export async function handleTool(name, args) {
 
   // Validations
   try {
-    validateDbName(database, "database");
-    validateDbUser(dbUser, "dbUser");
-    validateDbHost(dbHost, "dbHost");
+    validatePattern(database, "database", /^[a-zA-Z0-9_-]+$/);
+    validatePattern(dbUser, "dbUser", /^[a-zA-Z0-9_.-]+$/);
+    validatePattern(dbHost, "dbHost", /^[a-zA-Z0-9._-]+$/);
     validateDbPort(dbPort, "dbPort");
     validateSqliteFile(sqliteFile, "sqliteFile");
   } catch (e) {

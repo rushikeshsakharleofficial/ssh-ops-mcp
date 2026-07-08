@@ -1,56 +1,44 @@
+import { parseArgs } from "node:util";
+
+const STRING_FLAGS = ["identity-file", "jump-host", "path"];
+const NUMERIC_FLAGS = ["timeout-ms", "port", "depth"];
+const BOOLEAN_FLAGS = ["sudo", "raw", "no-sudo"];
+
+const PARSE_ARGS_OPTIONS = {};
+for (const flag of STRING_FLAGS) PARSE_ARGS_OPTIONS[flag] = { type: "string" };
+for (const flag of NUMERIC_FLAGS) PARSE_ARGS_OPTIONS[flag] = { type: "string" };
+for (const flag of BOOLEAN_FLAGS) PARSE_ARGS_OPTIONS[flag] = { type: "boolean" };
+
 export function parseOptions(args) {
-  const options = {};
-  const positional = [];
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === "--") {
-      positional.push(...args.slice(i + 1));
-      break;
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args,
+      options: PARSE_ARGS_OPTIONS,
+      strict: true,
+      allowPositionals: true
+    }));
+  } catch (error) {
+    const match = /'(--[\w-]+)/.exec(error.message);
+    if (match && /argument missing|argument is ambiguous/.test(error.message)) {
+      throw new Error(`Option ${match[1]} requires a value.`);
     }
-    if (!arg.startsWith("--")) {
-      positional.push(arg);
-      continue;
+    if (match && /^Unknown option/.test(error.message)) {
+      throw new Error(`Unknown option: ${match[1]}`);
     }
-
-    const [flag, inlineValue] = arg.split("=", 2);
-    const readValue = () => {
-      if (inlineValue !== undefined) {
-        if (!inlineValue) {
-          throw new Error(`Option ${flag} requires a value.`);
-        }
-        return inlineValue;
-      }
-      const nextValue = args[i + 1];
-      if (!nextValue || nextValue.startsWith("--")) {
-        throw new Error(`Option ${flag} requires a value.`);
-      }
-      i += 1;
-      return nextValue;
-    };
-
-    if (flag === "--sudo") {
-      options.sudo = true;
-    } else if (flag === "--raw") {
-      options.raw = true;
-    } else if (flag === "--no-sudo") {
-      options.includeSudo = false;
-    } else if (flag === "--timeout-ms") {
-      options.timeoutMs = Number(readValue());
-    } else if (flag === "--port") {
-      options.port = Number(readValue());
-    } else if (flag === "--identity-file") {
-      options.identityFile = readValue();
-    } else if (flag === "--jump-host") {
-      options.jumpHost = readValue();
-    } else if (flag === "--path") {
-      options.path = readValue();
-    } else if (flag === "--depth") {
-      options.depth = Number(readValue());
-    } else {
-      throw new Error(`Unknown option: ${flag}`);
-    }
+    throw error;
   }
 
-  return { options, positional };
+  const options = {};
+  if (values.sudo) options.sudo = true;
+  if (values.raw) options.raw = true;
+  if (values["no-sudo"]) options.includeSudo = false;
+  if (values["timeout-ms"] !== undefined) options.timeoutMs = Number(values["timeout-ms"]);
+  if (values.port !== undefined) options.port = Number(values.port);
+  if (values["identity-file"] !== undefined) options.identityFile = values["identity-file"];
+  if (values["jump-host"] !== undefined) options.jumpHost = values["jump-host"];
+  if (values.path !== undefined) options.path = values.path;
+  if (values.depth !== undefined) options.depth = Number(values.depth);
+
+  return { options, positional: positionals };
 }

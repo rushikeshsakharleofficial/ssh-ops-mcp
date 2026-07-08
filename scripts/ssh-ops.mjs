@@ -62,6 +62,122 @@ function readHiddenLine(prompt) {
   });
 }
 
+const RUN_COMMANDS = {
+  run(options, positional) {
+    const target = positional.shift();
+    const remoteCommand = positional.join(" ");
+    if (!remoteCommand) {
+      throw new Error("run requires a target/profile and command.");
+    }
+    return {
+      target,
+      command: remoteCommand,
+      sudo: Boolean(options.sudo),
+      mode: options.raw ? "raw" : "bash"
+    };
+  },
+  inventory(options, positional) {
+    const target = positional.shift();
+    return {
+      target,
+      command: hardwareInventoryScript({ includeSudo: options.includeSudo !== false }),
+      mode: "bash",
+      timeoutMs: options.timeoutMs || 180_000
+    };
+  },
+  disk(options, positional) {
+    const target = positional.shift();
+    const path = positional.shift() || options.path || "/";
+    const depth = positional.shift() || options.depth || 1;
+    return {
+      target,
+      command: diskReportScript({ path, depth }),
+      mode: "bash",
+      timeoutMs: options.timeoutMs || 180_000
+    };
+  },
+  health(options, positional) {
+    const target = positional.shift();
+    return {
+      target,
+      command: healthReportScript(),
+      mode: "bash",
+      timeoutMs: options.timeoutMs || 120_000
+    };
+  },
+  "file-read"(options, positional) {
+    const target = positional.shift();
+    const filePath = positional.shift();
+    if (!target || !filePath) throw new Error("file-read requires <target> <path>.");
+    return {
+      target,
+      command: fileReadScript(filePath, options.maxBytes, options.encoding),
+      mode: "bash"
+    };
+  },
+  async "file-write"(options, positional) {
+    const target = positional.shift();
+    const filePath = positional.shift();
+    if (!target || !filePath) throw new Error("file-write requires <target> <path> <content|->");
+    let content = positional.join(" ");
+    if (content === "-" || (!content && positional.length === 0)) {
+      content = await readStdin();
+    }
+    return {
+      target,
+      command: fileWriteScript(filePath, content, { sudo: Boolean(options.sudo), backup: options.backup !== false }),
+      mode: "bash"
+    };
+  },
+  service(options, positional) {
+    const target = positional.shift();
+    const action = positional.shift();
+    const unit = positional.shift();
+    if (!target || !action || !unit) throw new Error("service requires <target> <action> <unit>.");
+    return {
+      target,
+      command: serviceScript(unit, action, { sudo: options.sudo !== false }),
+      mode: "bash"
+    };
+  },
+  logs(options, positional) {
+    const target = positional.shift();
+    if (!target) throw new Error("logs requires <target>.");
+    return {
+      target,
+      command: logSearchScript({
+        unit: options.unit,
+        lines: options.lines,
+        since: options.since,
+        pattern: options.pattern
+      }),
+      mode: "bash"
+    };
+  },
+  package(options, positional) {
+    const target = positional.shift();
+    const action = positional.shift();
+    if (!target || !action) throw new Error("package requires <target> <action> [<pkg>...].");
+    const packages = positional;
+    return {
+      target,
+      command: packageScript({ action, packages, sudo: options.sudo !== false }),
+      mode: "bash"
+    };
+  },
+  "network-check"(options, positional) {
+    const target = positional.shift();
+    const host = positional.shift();
+    if (!target || !host) throw new Error("network-check requires <target> <host> [<port>].");
+    const port = positional.shift() || options.port;
+    return {
+      target,
+      command: networkCheckScript({ host, port, ping: options.ping !== false, tls: Boolean(options.tls) }),
+      mode: "bash"
+    };
+  }
+};
+
 const [command, ...rest] = process.argv.slice(2);
 
 try {
@@ -75,156 +191,10 @@ try {
     process.exit(0);
   }
 
-  if (command === "run") {
+  if (RUN_COMMANDS[command]) {
     const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const remoteCommand = positional.join(" ");
-    if (!remoteCommand) {
-      throw new Error("run requires a target/profile and command.");
-    }
-    await printRun({
-      ...options,
-      target,
-      command: remoteCommand,
-      sudo: Boolean(options.sudo),
-      mode: options.raw ? "raw" : "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "inventory") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    await printRun({
-      ...options,
-      target,
-      command: hardwareInventoryScript({ includeSudo: options.includeSudo !== false }),
-      mode: "bash",
-      timeoutMs: options.timeoutMs || 180_000
-    });
-    process.exit(0);
-  }
-
-  if (command === "disk") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const path = positional.shift() || options.path || "/";
-    const depth = positional.shift() || options.depth || 1;
-    await printRun({
-      ...options,
-      target,
-      command: diskReportScript({ path, depth }),
-      mode: "bash",
-      timeoutMs: options.timeoutMs || 180_000
-    });
-    process.exit(0);
-  }
-
-  if (command === "health") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    await printRun({
-      ...options,
-      target,
-      command: healthReportScript(),
-      mode: "bash",
-      timeoutMs: options.timeoutMs || 120_000
-    });
-    process.exit(0);
-  }
-
-  if (command === "file-read") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const filePath = positional.shift();
-    if (!target || !filePath) throw new Error("file-read requires <target> <path>.");
-    await printRun({
-      ...options,
-      target,
-      command: fileReadScript(filePath, options.maxBytes, options.encoding),
-      mode: "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "file-write") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const filePath = positional.shift();
-    if (!target || !filePath) throw new Error("file-write requires <target> <path> <content|->");
-    let content = positional.join(" ");
-    if (content === "-" || (!content && positional.length === 0)) {
-      content = await readStdin();
-    }
-    await printRun({
-      ...options,
-      target,
-      command: fileWriteScript(filePath, content, { sudo: Boolean(options.sudo), backup: options.backup !== false }),
-      mode: "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "service") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const action = positional.shift();
-    const unit = positional.shift();
-    if (!target || !action || !unit) throw new Error("service requires <target> <action> <unit>.");
-    await printRun({
-      ...options,
-      target,
-      command: serviceScript(unit, action, { sudo: options.sudo !== false }),
-      mode: "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "logs") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    if (!target) throw new Error("logs requires <target>.");
-    await printRun({
-      ...options,
-      target,
-      command: logSearchScript({
-        unit: options.unit,
-        lines: options.lines,
-        since: options.since,
-        pattern: options.pattern
-      }),
-      mode: "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "package") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const action = positional.shift();
-    if (!target || !action) throw new Error("package requires <target> <action> [<pkg>...].");
-    const packages = positional;
-    await printRun({
-      ...options,
-      target,
-      command: packageScript({ action, packages, sudo: options.sudo !== false }),
-      mode: "bash"
-    });
-    process.exit(0);
-  }
-
-  if (command === "network-check") {
-    const { options, positional } = parseOptions(rest);
-    const target = positional.shift();
-    const host = positional.shift();
-    if (!target || !host) throw new Error("network-check requires <target> <host> [<port>].");
-    const port = positional.shift() || options.port;
-    await printRun({
-      ...options,
-      target,
-      command: networkCheckScript({ host, port, ping: options.ping !== false, tls: Boolean(options.tls) }),
-      mode: "bash"
-    });
+    const built = await RUN_COMMANDS[command](options, positional);
+    await printRun({ ...options, ...built });
     process.exit(0);
   }
 

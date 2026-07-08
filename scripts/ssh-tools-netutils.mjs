@@ -1,5 +1,5 @@
 // ssh-tools-netutils.mjs — network utils: ssh_dns_check, ssh_traceroute, ssh_hosts
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
 
 const DOMAIN_RE = /^[a-zA-Z0-9._-]+$/;
 const HOST_RE = /^[a-zA-Z0-9._-]+$/;

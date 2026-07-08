@@ -1,9 +1,5 @@
 // ssh-tools-storage3.mjs — advanced storage: ssh_nfs, ssh_zfs
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
-
-function validateAbsPath(p) {
-  return typeof p === "string" && p.startsWith("/") && !p.includes("..") && !/[\r\n\x00]/.test(p);
-}
+import { shellQuote, textResult, dryRunResult, requireConfirm, validateAbsPath, runToolAction } from "./ssh-core.mjs";
 
 function validateZfsName(n) {
   return typeof n === "string" && /^[a-zA-Z0-9_.:@/-]+$/.test(n) && n.length > 0;
@@ -141,8 +137,7 @@ exportfs -ra 2>&1 && echo "NFS exports reloaded"
     }
 
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: args.sudo !== false, timeoutMs: args.timeoutMs || 60_000 });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: args.sudo !== false, timeoutMs: args.timeoutMs || 60_000 });
   }
 
   if (name === "ssh_zfs") {
@@ -237,8 +232,7 @@ zfs set ${propVal} ${ds} 2>&1 && echo "Set ${args.property}=${args.value} on ${a
     }
 
     if (args.dryRun === true) return dryRunResult(name, args, command, args.target || args.host);
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: args.sudo !== false, timeoutMs: args.timeoutMs || 120_000 });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: args.sudo !== false, timeoutMs: args.timeoutMs || 120_000 });
   }
 
   return null;

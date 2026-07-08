@@ -1,5 +1,5 @@
 // ssh-tools-fleet.mjs — fleet tools: ssh_fleet_health, ssh_anomaly, ssh_change_tracker
-import { runSshCommand, formatRunResult, runMultiSshCommand, listProfiles, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { runSshCommand, formatRunResult, listProfiles, textResult, validateAbsPath } from "./ssh-core.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,9 +9,7 @@ const ANOMALY_STORE = join(PLUGIN_ROOT, "ssh-ops-anomaly.json");
 
 function validatePath(path) {
   if (typeof path !== "string") return "path must be a string";
-  if (!path.startsWith("/")) return "path must be absolute (start with /)";
-  if (path.includes("..")) return "path must not contain ..";
-  if (/[\x00\r\n]/.test(path)) return "path must not contain null bytes or newlines";
+  if (!validateAbsPath(path)) return "path must be absolute (start with /), contain no .., and have no null bytes or newlines";
   return null;
 }
 

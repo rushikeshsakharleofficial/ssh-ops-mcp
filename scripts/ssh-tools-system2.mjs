@@ -1,5 +1,5 @@
 // ssh-tools-system2.mjs — system tools: ssh_sysctl, ssh_swap, ssh_kernel, ssh_limits
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { textResult, dryRunResult, requireConfirm, runToolAction } from "./ssh-core.mjs";
 
 const LIMITS_ITEM_ALLOWLIST = new Set([
   "nofile","nproc","memlock","stack","core","fsize","as","cpu","rss","locks",
@@ -146,8 +146,7 @@ export async function handleTool(name, args) {
       }
     }
 
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: useSudo });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: useSudo });
   }
 
   // ── ssh_swap ────────────────────────────────────────────────────────────────
@@ -206,8 +205,7 @@ echo "Swap file removed and disabled"`;
       command = `swapoff ${JSON.stringify(String(args.swapFile))}`;
     }
 
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: useSudo });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: useSudo });
   }
 
   // ── ssh_kernel ──────────────────────────────────────────────────────────────
@@ -250,8 +248,7 @@ echo "Swap file removed and disabled"`;
       command = `sysctl -a 2>/dev/null | grep -E "^(vm\\.|net\\.ipv4\\.|kernel\\.)" | head -40`;
     }
 
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: useSudo });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: useSudo });
   }
 
   // ── ssh_limits ──────────────────────────────────────────────────────────────
@@ -325,8 +322,7 @@ echo "Swap file removed and disabled"`;
       command = `sed -i ${JSON.stringify(`/^${domain}.*${item}/d`)} /etc/security/limits.conf /etc/security/limits.d/*.conf 2>/dev/null; echo "Done"`;
     }
 
-    const result = await runSshCommand({ ...args, command, mode: "bash", sudo: useSudo });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction({ ...args, command, mode: "bash", sudo: useSudo });
   }
 
   return null;

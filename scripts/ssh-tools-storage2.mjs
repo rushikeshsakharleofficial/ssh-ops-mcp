@@ -1,4 +1,4 @@
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { shellQuote, textResult, dryRunResult, requireConfirm, runToolAction } from "./ssh-core.mjs";
 
 const LVM_NAME_RE = /^[a-zA-Z0-9._+-]+$/;
 const SIZE_RE = /^[+]?[0-9]+[MGT]$/;
@@ -125,6 +125,5 @@ export async function handleTool(name, args) {
 
   if (MUTATING.includes(action) && !confirm) return requireConfirm("ssh_lvm", args);
 
-  const result = await runSshCommand({ target: args.target, command: script, mode: "bash", sudo: false });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction({ target: args.target, command: script, mode: "bash", sudo: false });
 }

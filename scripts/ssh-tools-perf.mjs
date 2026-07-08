@@ -1,5 +1,5 @@
 // ssh-tools-perf.mjs — performance tools: ssh_perf, ssh_dmesg, ssh_tcpdump
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { shellQuote, textResult, requireConfirm, runToolAction } from "./ssh-core.mjs";
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
 
@@ -119,16 +119,10 @@ cat /proc/loadavg
 echo "(1min 5min 15min running/total lastpid)"
 `;
 
-  if (args.dryRun) return dryRunResult("ssh_perf", args, script, args.target);
-
-  const result = await runSshCommand({
-    target: args.target,
-    command: script,
-    mode: "bash",
-    sudo,
-    timeoutMs
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, mode: "bash", sudo, timeoutMs },
+    { toolName: "ssh_perf", args, dryRunCommand: script }
+  );
 }
 
 async function handleSshDmesg(args) {
@@ -183,16 +177,10 @@ fi
 echo "$_out" | ${filterPipe} | tail -n "$_lines"
 `;
 
-  if (args.dryRun) return dryRunResult("ssh_dmesg", args, script, args.target);
-
-  const result = await runSshCommand({
-    target: args.target,
-    command: script,
-    mode: "bash",
-    sudo,
-    timeoutMs
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, mode: "bash", sudo, timeoutMs },
+    { toolName: "ssh_dmesg", args, dryRunCommand: script }
+  );
 }
 
 async function handleSshTcpdump(args) {
@@ -247,16 +235,10 @@ echo ""
 echo "=== Capture complete ==="
 `;
 
-  if (args.dryRun) return dryRunResult("ssh_tcpdump", args, script, args.target);
-
-  const result = await runSshCommand({
-    target: args.target,
-    command: script,
-    mode: "bash",
-    sudo,
-    timeoutMs
-  });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, mode: "bash", sudo, timeoutMs },
+    { toolName: "ssh_tcpdump", args, dryRunCommand: script }
+  );
 }
 
 // ─── Dispatch ──────────────────────────────────────────────────────────────

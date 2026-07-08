@@ -1,8 +1,8 @@
 // ssh-tools-network.mjs — network security tools: ssh_firewall, ssh_ssl_cert, ssh_port_scan
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { shellQuote, textResult, requireConfirm, hasControlChars, runToolAction } from "./ssh-core.mjs";
 
 function rejectControlChars(val, name) {
-  if (/[\r\n\x00]/.test(val)) throw new Error(`${name} must not contain newline or null bytes`);
+  if (hasControlChars(val)) throw new Error(`${name} must not contain newline or null bytes`);
 }
 
 function validatePort(port, name = "port") {
@@ -163,10 +163,10 @@ async function handleFirewall(args) {
     return textResult(`ssh_firewall: ${e.message}`, true);
   }
 
-  if (args.dryRun) return dryRunResult("ssh_firewall", args, command);
-
-  const result = await runSshCommand({ ...args, command, mode: "bash", sudo: args.sudo !== false });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { ...args, command, mode: "bash", sudo: args.sudo !== false },
+    { toolName: "ssh_firewall", args, dryRunCommand: command }
+  );
 }
 
 // ─── ssh_ssl_cert ─────────────────────────────────────────────────────────────
@@ -239,12 +239,9 @@ async function handleSslCert(args) {
 
   const command = buildSslCertScript(args.host, port);
 
-  if (args.dryRun) return dryRunResult("ssh_ssl_cert", args, command, args.target);
-
   const runArgs = { ...args, command, mode: "bash", sudo: false };
   if (args.timeoutMs !== undefined) runArgs.timeoutMs = args.timeoutMs;
-  const result = await runSshCommand(runArgs);
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(runArgs, { toolName: "ssh_ssl_cert", args, dryRunCommand: command });
 }
 
 // ─── ssh_port_scan ────────────────────────────────────────────────────────────
@@ -301,12 +298,9 @@ async function handlePortScan(args) {
 
   const command = buildPortScanScript(args);
 
-  if (args.dryRun) return dryRunResult("ssh_port_scan", args, command);
-
   const runArgs = { ...args, command, mode: "bash", sudo: args.sudo !== false };
   if (args.timeoutMs !== undefined) runArgs.timeoutMs = args.timeoutMs;
-  const result = await runSshCommand(runArgs);
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(runArgs, { toolName: "ssh_port_scan", args, dryRunCommand: command });
 }
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────

@@ -1,17 +1,5 @@
 // ssh-tools-storage.mjs — storage and deployment tools: ssh_mount, ssh_git, ssh_backup
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
-
-function hasControlChars(s) {
-  return /[\r\n\x00]/.test(s);
-}
-
-function isAbsNoTraversal(p) {
-  if (typeof p !== "string") return false;
-  if (!p.startsWith("/")) return false;
-  if (p.includes("\x00")) return false;
-  const parts = p.split("/");
-  return !parts.includes("..");
-}
+import { textResult, requireConfirm, hasControlChars, validateAbsPath as isAbsNoTraversal, runToolAction } from "./ssh-core.mjs";
 
 // ─── ssh_mount ───────────────────────────────────────────────────────────────
 
@@ -97,10 +85,10 @@ mount ${fstypeFlag} ${optsFlag} "$_dev" "$_mp" && echo "Mounted $_dev at $_mp" |
 findmnt "$_mp" 2>/dev/null || mount | grep "$_mp"
 `;
 
-      if (args.dryRun) return dryRunResult("ssh_mount", args, script, args.target);
-
-      const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-      return textResult(formatRunResult(result), result.exitCode !== 0);
+      return runToolAction(
+        { target: args.target, command: script, sudo, mode: "bash" },
+        { toolName: "ssh_mount", args, dryRunCommand: script }
+      );
     }
 
     // umount
@@ -110,10 +98,10 @@ export LC_ALL=C
 _mp=${mpQ}
 umount "$_mp" && echo "Unmounted $_mp" || { echo "Unmount failed" >&2; exit 1; }
 `;
-    if (args.dryRun) return dryRunResult("ssh_mount", args, script, args.target);
-
-    const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(
+      { target: args.target, command: script, sudo, mode: "bash" },
+      { toolName: "ssh_mount", args, dryRunCommand: script }
+    );
   }
 
   // list
@@ -124,10 +112,10 @@ findmnt --output TARGET,SOURCE,FSTYPE,SIZE,USED,AVAIL,USE%,OPTIONS 2>/dev/null |
   mount | column -t 2>/dev/null || \
   cat /proc/mounts
 `;
-  if (args.dryRun) return dryRunResult("ssh_mount", args, script, args.target);
-
-  const result = await runSshCommand({ target: args.target, command: script, sudo: false, mode: "bash" });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, sudo: false, mode: "bash" },
+    { toolName: "ssh_mount", args, dryRunCommand: script }
+  );
 }
 
 // ─── ssh_git ─────────────────────────────────────────────────────────────────
@@ -224,10 +212,10 @@ cd "$_repo" || { echo "Cannot cd to $_repo" >&2; exit 1; }
 ${actionScript}
 `;
 
-  if (args.dryRun) return dryRunResult("ssh_git", args, script, args.target);
-
-  const result = await runSshCommand({ target: args.target, command: script, sudo: Boolean(args.sudo), mode: "bash" });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, sudo: Boolean(args.sudo), mode: "bash" },
+    { toolName: "ssh_git", args, dryRunCommand: script }
+  );
 }
 
 // ─── ssh_backup ──────────────────────────────────────────────────────────────
@@ -304,10 +292,10 @@ else
   echo "Backup failed" >&2; exit 1
 fi
 `;
-    if (args.dryRun) return dryRunResult("ssh_backup", args, script, args.target);
-
-    const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(
+      { target: args.target, command: script, sudo, mode: "bash" },
+      { toolName: "ssh_backup", args, dryRunCommand: script }
+    );
   }
 
   if (action === "list") {
@@ -321,10 +309,10 @@ echo ""
 echo "Total:"
 du -sh "$_dest" 2>/dev/null | cut -f1
 `;
-    if (args.dryRun) return dryRunResult("ssh_backup", args, script, args.target);
-
-    const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(
+      { target: args.target, command: script, sudo, mode: "bash" },
+      { toolName: "ssh_backup", args, dryRunCommand: script }
+    );
   }
 
   if (action === "restore") {
@@ -355,10 +343,10 @@ mkdir -p "$_to"
 echo "Restoring $_file to $_to"
 tar xzf "$_file" -C "$_to" 2>&1 && echo "Restore complete: $_to"
 `;
-    if (args.dryRun) return dryRunResult("ssh_backup", args, script, args.target);
-
-    const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(
+      { target: args.target, command: script, sudo, mode: "bash" },
+      { toolName: "ssh_backup", args, dryRunCommand: script }
+    );
   }
 
   // prune
@@ -382,10 +370,10 @@ done
 echo "Done. Remaining:"
 ls -lh "$_dest"/*.tar.gz 2>/dev/null | wc -l | xargs echo "backups:"
 `;
-  if (args.dryRun) return dryRunResult("ssh_backup", args, script, args.target);
-
-  const result = await runSshCommand({ target: args.target, command: script, sudo, mode: "bash" });
-  return textResult(formatRunResult(result), result.exitCode !== 0);
+  return runToolAction(
+    { target: args.target, command: script, sudo, mode: "bash" },
+    { toolName: "ssh_backup", args, dryRunCommand: script }
+  );
 }
 
 // ─── Exports ─────────────────────────────────────────────────────────────────

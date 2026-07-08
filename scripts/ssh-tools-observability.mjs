@@ -1,17 +1,15 @@
 // ssh-tools-observability.mjs — observability tools: ssh_tail, ssh_memory_report, ssh_systemd_timer
-import { runSshCommand, formatRunResult, shellQuote, textResult, dryRunResult, requireConfirm } from "./ssh-core.mjs";
+import { textResult, dryRunResult, requireConfirm, hasControlChars, validateAbsPath, runToolAction } from "./ssh-core.mjs";
 
 function validatePath(path) {
   if (typeof path !== "string") return "path must be a string";
-  if (!path.startsWith("/")) return "path must be absolute (start with /)";
-  if (path.includes("..")) return "path must not contain ..";
-  if (/[\x00\r\n]/.test(path)) return "path must not contain null bytes or newlines";
+  if (!validateAbsPath(path)) return "path must be absolute (start with /), contain no .., and have no null bytes or newlines";
   return null;
 }
 
 function validateString(val, name) {
   if (typeof val !== "string") return null;
-  if (/[\r\n\x00]/.test(val)) return `${name} must not contain \\r, \\n, or null bytes`;
+  if (hasControlChars(val)) return `${name} must not contain \\r, \\n, or null bytes`;
   return null;
 }
 
@@ -97,8 +95,7 @@ export async function handleTool(name, args) {
     const runArgs = { command: bash, target: args.target, mode: "bash" };
     if (effectiveTimeout !== undefined) runArgs.timeoutMs = effectiveTimeout;
 
-    const result = await runSshCommand(runArgs);
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(runArgs);
   }
 
   // ── ssh_memory_report ─────────────────────────────────────────────────────
@@ -142,13 +139,7 @@ echo ""
 echo "=== Top ${topN} Processes by RSS ==="
 printf "%-10s %-20s %10s %10s\\n" "PID" "PROCESS" "RSS_MB" "VSZ_MB"
 printf "%-10s %-20s %10s %10s\\n" "---" "-------" "------" "------"
-for f in /proc/[0-9]*/status; do
-  pid=$(echo "$f" | cut -d/ -f3)
-  name=$(grep "^Name:" "$f" 2>/dev/null | awk '{print $2}')
-  rss=$(grep "^VmRSS:" "$f" 2>/dev/null | awk '{print $2}')
-  vsz=$(grep "^VmSize:" "$f" 2>/dev/null | awk '{print $2}')
-  [ -n "$rss" ] && echo "$rss $pid $name $vsz"
-done 2>/dev/null | sort -rn | head -${topN} | while read rss pid name vsz; do
+ps -eo pid,comm,rss,vsz --sort=-rss --no-headers 2>/dev/null | head -${topN} | while read pid name rss vsz; do
   printf "%-10s %-20s %10.1f %10.1f\\n" "$pid" "$name" "$(echo $rss | awk '{print $1/1024}')" "$(echo $vsz | awk '{print $1/1024}')"
 done
 `;
@@ -156,8 +147,7 @@ done
     const runArgs = { command: bash, target: args.target, mode: "bash" };
     if (args.timeoutMs !== undefined) runArgs.timeoutMs = args.timeoutMs;
 
-    const result = await runSshCommand(runArgs);
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(runArgs);
   }
 
   // ── ssh_systemd_timer ─────────────────────────────────────────────────────
@@ -213,8 +203,7 @@ done
     const runArgs = { command: bash, target: args.target, mode: "bash", sudo: useSudo };
     if (args.timeoutMs !== undefined) runArgs.timeoutMs = args.timeoutMs;
 
-    const result = await runSshCommand(runArgs);
-    return textResult(formatRunResult(result), result.exitCode !== 0);
+    return runToolAction(runArgs);
   }
 
   return null;

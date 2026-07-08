@@ -2409,6 +2409,14 @@ export function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+export function hasControlChars(s) {
+  return /[\r\n\x00]/.test(s);
+}
+
+export function validateAbsPath(p) {
+  return typeof p === "string" && p.startsWith("/") && !p.includes("..") && !hasControlChars(p);
+}
+
 export function psQuote(v) {
   return `'${String(v).replace(/'/g, "''")}'`;
 }
@@ -2431,4 +2439,18 @@ export function dryRunResult(toolName, args, command, target) {
 export function requireConfirm(toolName, args) {
   const r = args.reason ? ` Stated reason: "${args.reason}".` : "";
   return textResult(`${toolName} requires confirm:true to execute.${r}`, true);
+}
+
+// Shared tail for tool handlers: optional dry-run short-circuit (only when the
+// caller passes dryRunCommand — some handlers gate dryRun earlier with a
+// synthetic preview string and must not get a second check here), then run +
+// format. Confirm gating is intentionally NOT included here — its position
+// relative to validation/dryRun varies per call site and folding it in would
+// change behavior at several sites.
+export async function runToolAction(runOpts, { toolName, args, dryRunCommand } = {}) {
+  if (dryRunCommand !== undefined && args?.dryRun) {
+    return dryRunResult(toolName, args, dryRunCommand, args.target);
+  }
+  const result = await runSshCommand(runOpts);
+  return textResult(formatRunResult(result), result.exitCode !== 0);
 }
