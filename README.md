@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-m
 #    ssh_run(target="prod", command="hostname; uptime")
 ```
 
-The installer registers the MCP server with every detected tool (Claude Code, Cursor, Codex, VS Code Copilot, Gemini CLI, OpenCode). Add servers from your AI assistant with `ssh_add_profile` — no config editing or installer prompts needed. See [Install](#install) for all options.
+The installer registers the MCP server with every detected tool (Claude Code, Cursor, Codex, VS Code Copilot, Gemini CLI, OpenCode) and installs the bundled `ssh-ops` skill for tools that read skills (Codex, Gemini CLI, OpenCode). Add servers from your AI assistant with `ssh_add_profile` — no config editing or installer prompts needed. See [Install](#install) for all options.
 
 ---
 
@@ -103,7 +103,7 @@ Each installer auto-detects which tools are installed and registers the MCP serv
 | VS Code Copilot | `settings.json` → `mcp.servers` |
 | Gemini CLI | user-scope via `gemini mcp add` |
 | Antigravity IDE | `~/.gemini/antigravity/mcp_config.json` |
-| OpenCode | `opencode mcp add --global` → `~/.config/opencode/opencode.jsonc` |
+| OpenCode | `opencode mcp add --global` → `~/.config/opencode/opencode.jsonc`; skill → `~/.config/opencode/skills/ssh-ops` |
 
 ### What the installer does
 

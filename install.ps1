@@ -421,8 +421,15 @@ if (Has "opencode") {
     # Use OpenCode's own CLI — it rewrites the config in place and preserves comments
     # and unrelated entries, which a JSON patch of opencode.jsonc would destroy
     & opencode mcp add ssh-ops --global -- node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Ok "Registered (global config)" }
+    if ($LASTEXITCODE -eq 0) { Ok "Registered MCP server (global config)" }
     else { Err "Registration failed — run manually: opencode mcp add ssh-ops --global -- node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
+
+    # Global skill: without this the skill is only visible inside the ssh-ops repo
+    $OpenCodeSkills = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode\skills" } else { Join-Path $env:USERPROFILE ".config\opencode\skills" }
+    $SkillDir = Join-Path $OpenCodeSkills "ssh-ops"
+    New-Item -ItemType Directory -Force -Path $SkillDir | Out-Null
+    Copy-Item (Join-Path $Dir "skills\ssh-ops\SKILL.md") (Join-Path $SkillDir "SKILL.md") -Force
+    Ok "Skill installed ($SkillDir)"
 } else { Skip "Not detected — skipping" }
 
 # ── Antigravity IDE ────────────────────────────────────────────────────────────

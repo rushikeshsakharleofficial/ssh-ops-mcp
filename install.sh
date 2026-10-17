@@ -533,9 +533,20 @@ if has opencode; then
   # Use OpenCode's own CLI — it rewrites the config in place and preserves comments
   # and unrelated entries, which a JSON.parse/patch of opencode.jsonc would destroy
   if opencode mcp add ssh-ops --global -- node "$DIR/scripts/ssh-mcp-server.mjs" >/dev/null 2>&1; then
-    ok "Registered (global config)"
+    ok "Registered MCP server (global config)"
   else
     err "Registration failed — run manually: opencode mcp add ssh-ops --global -- node \"$DIR/scripts/ssh-mcp-server.mjs\""
+  fi
+
+  # Global skill: without this the skill is only visible inside the ssh-ops repo
+  OPENCODE_SKILLS="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
+  mkdir -p "$OPENCODE_SKILLS"
+  if [ -L "$OPENCODE_SKILLS/ssh-ops" ] || [ ! -e "$OPENCODE_SKILLS/ssh-ops" ]; then
+    ln -sfn "$DIR/skills/ssh-ops" "$OPENCODE_SKILLS/ssh-ops"
+    ok "Linked skill (tracks re-installs)"
+  else
+    cp -f "$DIR/skills/ssh-ops/SKILL.md" "$OPENCODE_SKILLS/ssh-ops/SKILL.md"
+    ok "Updated skill"
   fi
 else
   skip "Not detected — skipping"
