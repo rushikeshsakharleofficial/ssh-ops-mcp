@@ -12,7 +12,7 @@
 
 ---
 
-SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords and credentials stored encrypted (AES-256-GCM, device-specific key).
+SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI, OpenCode, and Antigravity IDE**. Uses your local `ssh` binary, existing keys, and SSH config. Passwords and credentials stored encrypted (AES-256-GCM, device-specific key).
 
 ## Table of Contents
 
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-m
 #    ssh_run(target="prod", command="hostname; uptime")
 ```
 
-The installer registers the MCP server with every detected tool (Claude Code, Cursor, Codex, VS Code Copilot, Gemini CLI) and runs a setup wizard on first install. See [Install](#install) for all options.
+The installer registers the MCP server with every detected tool (Claude Code, Cursor, Codex, VS Code Copilot, Gemini CLI, OpenCode). Add servers from your AI assistant with `ssh_add_profile` — no config editing or installer prompts needed. See [Install](#install) for all options.
 
 ---
 
@@ -103,6 +103,7 @@ Each installer auto-detects which tools are installed and registers the MCP serv
 | VS Code Copilot | `settings.json` → `mcp.servers` |
 | Gemini CLI | user-scope via `gemini mcp add` |
 | Antigravity IDE | `~/.gemini/antigravity/mcp_config.json` |
+| OpenCode | `opencode mcp add --global` → `~/.config/opencode/opencode.jsonc` |
 
 ### What the installer does
 
@@ -113,7 +114,6 @@ Each installer auto-detects which tools are installed and registers the MCP serv
 | `curl` | apt / dnf / yum / apk / brew / pacman / zypper |
 | `ssh` (OpenSSH client) | system package manager / Windows OpenSSH capability |
 | `node` 18+ | nvm (macOS/Linux) · winget / choco / scoop (Windows) |
-| `claude` CLI | `npm install -g @anthropic-ai/claude-code` |
 | `sshpass` | system package manager (needed for password-based profiles) |
 
 Package manager auto-detected: `apt-get` → `dnf` → `yum` → `apk` → `brew` → `pacman` → `zypper`
@@ -124,7 +124,7 @@ Package manager auto-detected: `apt-get` → `dnf` → `yum` → `apk` → `brew
 - Installs SSH Ops as a **Claude Code skill plugin** (`.skill` ZIP — discovered by `/reload-plugins`) and a **Gemini CLI extension** (`~/.gemini/extensions/ssh-ops/`)
 - Registers MCP server with every detected IDE/CLI tool
 - Re-running is idempotent — shows "Already registered" for each tool, only updates what changed
-- **Interactive setup wizard** runs on first install: asks for server, jump server, switch user — tests the connection before saving
+- **No install-time prompts** — add servers at any time from your AI assistant with `ssh_add_profile` (or edit the config file)
 
 Restart your IDE or CLI session after running.
 
@@ -142,10 +142,10 @@ $env:SSH_OPS_DIR="C:\tools\ssh-ops"; irm https://raw.githubusercontent.com/rushi
 
 **Update:** re-run the same install command.
 
-**Force setup wizard** (reconfigure server profiles):
+**Add a server** (any time — no re-install needed):
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main/install.sh) --setup
+```
+ssh_add_profile(name="prod", host="server.example.com", user="deploy")
 ```
 
 ---
@@ -517,7 +517,7 @@ CLI options:
 
 ## How It Works
 
-- **Dependencies** — installer auto-detects the OS package manager (apt/dnf/yum/apk/brew/pacman/zypper) and installs curl, ssh, node, claude CLI, and sshpass without requiring any manual pre-work. On Windows, enables the built-in OpenSSH capability for ssh.
+- **Dependencies** — installer auto-detects the OS package manager (apt/dnf/yum/apk/brew/pacman/zypper) and installs curl, ssh, node, and sshpass without requiring any manual pre-work. On Windows, enables the built-in OpenSSH capability for ssh.
 - **Config loading** — merges `ssh-ops.config.yaml` (project root) with `~/.ssh/ssh-ops.yaml` (machine-wide) and `ssh-ops.dynamic.json` (MCP-added profiles and jump servers). Override or add extra files with the `SSH_OPS_CONFIG` env var (colon-separated paths). Later files win on conflicts.
 - **Script builders** — each tool generates a self-contained bash script piped to `bash -s` on the remote. No interactive shell, no agent forwarding required.
 - **Auto-retry on transient SSH failures** — 2 retries with 1.5× backoff on connection reset, timeout, kex errors.

@@ -3,7 +3,6 @@ $ErrorActionPreference = "Stop"
 $Base         = "https://raw.githubusercontent.com/rushikeshsakharleofficial/ssh-ops-mcp/main"
 $Dir          = if ($env:SSH_OPS_DIR)       { $env:SSH_OPS_DIR }       else { "$env:USERPROFILE\.ssh-ops" }
 $CodexPlugins = if ($env:CODEX_PLUGINS_DIR) { $env:CODEX_PLUGINS_DIR } else { "$env:USERPROFILE\.codex\plugins" }
-$ForceSetup   = $args -contains "--setup"
 
 # ── Color helpers ─────────────────────────────────────────────────────────────
 function Step($m) { Write-Host; Write-Host "▶  $m" -ForegroundColor Cyan -NoNewline; Write-Host "" }
@@ -54,13 +53,6 @@ if (-not (Has "node")) {
     if (-not (Has "node")) { Err "Node.js installed but not on PATH — restart terminal and re-run."; exit 1 }
     Ok "Node.js $(node --version) installed"
 } else { Ok "node $(node --version)" }
-
-# claude CLI — required for Claude Code MCP registration
-if (-not (Has "claude")) {
-    Warn "claude CLI not found — installing"
-    npm install -g @anthropic-ai/claude-code --silent 2>&1 | Out-Null
-    if (Has "claude") { Ok "claude CLI installed" } else { Warn "claude CLI install failed — Claude Code registration may fail" }
-} else { Ok "claude CLI found" }
 
 # sshpass — optional, needed for password-based SSH profiles
 if (-not (Has "sshpass")) {
@@ -306,18 +298,22 @@ fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
 
 Step "Claude Code"
 $McpTarget = "$Dir\scripts\ssh-mcp-server.mjs"
-$mcpInfo = & claude mcp get ssh-ops 2>&1
-if ($mcpInfo -match [regex]::Escape($McpTarget)) {
-    Ok "Already registered (up-to-date)"
+if (-not (Has "claude")) {
+    Skip "claude CLI not found — skipping"
 } else {
-    # Remove from all scopes before re-adding to avoid "already exists" errors
-    & claude mcp remove ssh-ops              2>&1 | Out-Null
-    & claude mcp remove ssh-ops -s local    2>&1 | Out-Null
-    & claude mcp remove ssh-ops -s user     2>&1 | Out-Null
-    & claude mcp remove ssh-ops -s project  2>&1 | Out-Null
-    & claude mcp add ssh-ops node $McpTarget 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Ok "Registered" }
-    else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$McpTarget`"" }
+    $mcpInfo = & claude mcp get ssh-ops 2>&1
+    if ($mcpInfo -match [regex]::Escape($McpTarget)) {
+        Ok "Already registered (up-to-date)"
+    } else {
+        # Remove from all scopes before re-adding to avoid "already exists" errors
+        & claude mcp remove ssh-ops              2>&1 | Out-Null
+        & claude mcp remove ssh-ops -s local    2>&1 | Out-Null
+        & claude mcp remove ssh-ops -s user     2>&1 | Out-Null
+        & claude mcp remove ssh-ops -s project  2>&1 | Out-Null
+        & claude mcp add ssh-ops node $McpTarget 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { Ok "Registered" }
+        else { Err "Registration failed — run manually: claude mcp add ssh-ops node `"$McpTarget`"" }
+    }
 }
 
 # ── Codex ──────────────────────────────────────────────────────────────────────
@@ -418,6 +414,17 @@ if (Has "gemini") {
     }
 } else { Skip "Not detected — skipping" }
 
+# ── OpenCode ───────────────────────────────────────────────────────────────────
+
+Step "OpenCode"
+if (Has "opencode") {
+    # Use OpenCode's own CLI — it rewrites the config in place and preserves comments
+    # and unrelated entries, which a JSON patch of opencode.jsonc would destroy
+    & opencode mcp add ssh-ops --global -- node "$Dir\scripts\ssh-mcp-server.mjs" 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok "Registered (global config)" }
+    else { Err "Registration failed — run manually: opencode mcp add ssh-ops --global -- node `"$Dir\scripts\ssh-mcp-server.mjs`"" }
+} else { Skip "Not detected — skipping" }
+
 # ── Antigravity IDE ────────────────────────────────────────────────────────────
 
 Step "Antigravity IDE"
@@ -434,85 +441,19 @@ if ((Has "antigravity") -or (Test-Path "$env:USERPROFILE\.gemini\antigravity")) 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 Step "Config"
-$cfg     = Join-Path $Dir "ssh-ops.config.yaml"
-$RunSetup = $false
-
-if ($ForceSetup) { $RunSetup = $true }
-elseif (-not (Test-Path $cfg)) {
+$cfg = Join-Path $Dir "ssh-ops.config.yaml"
+if (Test-Path $cfg) {
+    Info "Preserved existing $cfg"
+} else {
     Copy-Item (Join-Path $Dir "ssh-ops.config.example.yaml") $cfg
-    $RunSetup = $true
-} elseif ((Get-Content $cfg -Raw 2>$null) -match "server\.example\.com") {
-    Warn "Config still contains demo data — running setup"
-    $RunSetup = $true
+    Ok "Created $cfg"
 }
-
-if ($RunSetup) {
-    if (-not [Environment]::UserInteractive) {
-        Info "Non-interactive install — edit $cfg to add your server profiles"
-    } else {
-        Write-Host
-        Info "Server setup (Enter to skip any field, Ctrl+C to cancel)"
-        Write-Host
-
-        $sHost = Read-Host "  Server host or IP"
-        if ([string]::IsNullOrWhiteSpace($sHost)) {
-            Info "Skipped — edit $cfg to add your server profiles"
-        } else {
-            $sUser  = Read-Host "  SSH user [root]"
-            if ([string]::IsNullOrWhiteSpace($sUser)) { $sUser = "root" }
-            $sPort  = Read-Host "  SSH port [22]"
-            if ([string]::IsNullOrWhiteSpace($sPort)) { $sPort = "22" }
-            $sPname = Read-Host "  Profile name [server1]"
-            if ([string]::IsNullOrWhiteSpace($sPname)) { $sPname = "server1" }
-            $sIdfile = Read-Host "  SSH identity file (blank for default)"
-
-            $sJump = Read-Host "  Route through jump/bastion server? [y/N]"
-            $jumpBlock = ""; $jumpRef = ""; $jHost = ""; $jUser = ""; $jPname = ""
-            if ($sJump -match "^[yY]") {
-                $jHost = Read-Host "  Jump host or IP"
-                $jUser = Read-Host "  Jump SSH user [$env:USERNAME]"
-                if ([string]::IsNullOrWhiteSpace($jUser)) { $jUser = $env:USERNAME }
-                $jSwitchUser = Read-Host "  Switch to user on jump server (blank = none)"
-                $jPname = Read-Host "  Jump profile name [bastion]"
-                if ([string]::IsNullOrWhiteSpace($jPname)) { $jPname = "bastion" }
-                $jumpBlock = "`n  ${jPname}:`n    host: $jHost`n    user: $jUser"
-                $jumpRef   = "`n    jumpProfile: $jPname"
-                if (-not [string]::IsNullOrWhiteSpace($jSwitchUser)) { $jumpRef += "`n    jumpUser: $jSwitchUser" }
-            }
-
-            $sLocalSwitch = Read-Host "  Is ssh-ops on this machine reaching internal hosts via local user switch? [y/N]"
-            $localSwitchLine = ""
-            if ($sLocalSwitch -match "^[yY]") {
-                $lUser = Read-Host "  Local user to switch to (sudo -n -u <user> ssh ...)"
-                if (-not [string]::IsNullOrWhiteSpace($lUser)) { $localSwitchLine = "`n    localSwitchUser: $lUser" }
-            }
-
-            $idLine = if (-not [string]::IsNullOrWhiteSpace($sIdfile)) { "`n    identityFile: $sIdfile" } else { "" }
-
-            $cfgContent = @"
-defaultTarget: $sPname
-defaults:
-  connectTimeoutSec: 12
-  strictHostKeyChecking: accept-new
-  timeoutMs: 120000
-  maxOutputBytes: 2000000
-profiles:
-  ${sPname}:
-    host: $sHost
-    user: $sUser
-    port: $sPort${idLine}${localSwitchLine}${jumpRef}
-${jumpBlock}
-"@
-            $cfgContent | Set-Content $cfg -Encoding UTF8
-            Ok "Config saved: $sPname → $sUser@$sHost"
-            if (-not [string]::IsNullOrWhiteSpace($jHost)) { Info "Via jump: $jPname → $jUser@$jHost" }
-        }
-    }
-} else { Info "Preserved existing $cfg" }
+Info "Add servers from your AI assistant: ssh_add_profile(name=`"prod`", host=`"host`", user=`"root`")"
+Info "Jump/bastion servers: ssh_add_jump(...)  or edit $cfg"
 
 # ── Done ───────────────────────────────────────────────────────────────────────
 
 Write-Host
 Write-Host "  ✓  SSH Ops installed successfully." -ForegroundColor Green
-Write-Host "  Restart Claude Code, Codex, Cursor, VS Code, Gemini, or Antigravity to activate." -ForegroundColor DarkGray
+Write-Host "  Restart Claude Code, Codex, Cursor, VS Code, Gemini, Antigravity, or OpenCode to activate." -ForegroundColor DarkGray
 Write-Host
