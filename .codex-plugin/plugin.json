@@ -24,8 +24,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SSH Ops",
-    "shortDescription": "35 SSH tools: inventory, files, services, packages, cron, users, docker, metrics, process mgmt, env vars, network, IP assignment, profiles, jump chain.",
-    "longDescription": "SSH Ops exposes 35 MCP tools for remote Linux server operations: hardware inventory, system metrics from /proc, health checks, disk reports, log search, TCP ping, network probing, file read/write/patch/diff (binary-safe), local script execution, scp file transfer, systemd service control, package management (apt/yum/dnf/apk auto-detect), crontab CRUD, Docker container management, process listing and kill, environment variable management, user management, chmod+chown+chgrp, sudoers management, parallel multi-host execution with group targeting, IP address assignment (all network stacks), dynamic profile management with AES-256-GCM encrypted passwords, profile inheritance and command allowlists, SSH -J jump chain management, and SSH key discovery.",
+    "shortDescription": "8 default SSH MCP tools; all 95 available with --profile full. Linux and Windows fleet operations.",
+    "longDescription": "SSH Ops MCP defaults to eight practical tools for SSH commands, fleet queries, profile setup, health, disks and logs. Use --profile full to expose all 95 specialised tools for files, services, networking, containers, databases, security, storage and Windows. Advanced functionality remains installed but out of the default tool catalogue to minimise context overhead.",
     "developerName": "Rushikesh Sakharle",
     "category": "Productivity",
     "capabilities": [

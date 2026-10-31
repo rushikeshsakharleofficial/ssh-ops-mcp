@@ -2,7 +2,7 @@
 
 # SSH Ops MCP
 
-**95 SSH tools for AI coding assistants — exec, inventory, health, files, services, containers, databases, networking, and more.**
+**8 essential MCP tools by default; 95 tools available in full mode — SSH, health, logs, files, services, containers, databases, and more.**
 
 [![CI](https://github.com/rushikeshsakharleofficial/ssh-ops-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/rushikeshsakharleofficial/ssh-ops-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -33,7 +33,7 @@ SSH Ops exposes SSH tasks as an MCP server and a plain Node CLI. Works with **Cl
 
 ## Features
 
-- **95 MCP tools** — exec, inventory, health, disk, logs, files, services, packages, cron, users, Docker, Kubernetes, databases, web servers, firewalls, WireGuard, ZFS, LVM, benchmarks, and more
+- **8 default MCP tools (95 with `--profile full`)** — common SSH operations by default; advanced tools are opt-in and stay installed
 - **Linux + Windows** — full PowerShell pipeline for Windows SSH targets; auto-detects OS per connection
 - **Multi-hop routing** — `jumpChain` (`-J` multi-hop), `jumpProfile` (nested SSH), `localSwitchUser` (bastion-local)
 - **Parallel fleet ops** — `ssh_run_multi` runs across all profiles matching a group; `ssh_fleet_health` gives a dashboard in one call
@@ -308,7 +308,7 @@ Updating credentials via `ssh_add_profile` clears the flag. Stored creds are reu
 
 ## MCP Tools
 
-**95 tools total.** `target` accepts a profile name or raw `user@host`. Full parameter reference: [MCP-Tools wiki](https://github.com/rushikeshsakharleofficial/ssh-ops-mcp/wiki/MCP-Tools).
+**8 tools exposed by default (95 with `--profile full`).** The default `lite` profile includes `ssh_run`, `ssh_run_multi`, `ssh_add_profile`, `ssh_profiles`, `ssh_log_search`, `ssh_tail`, `ssh_health_report`, and `ssh_disk_report`. To enable advanced tools, start the server with `node scripts/ssh-mcp-server.mjs --profile full` (or set `SSH_OPS_PROFILE=full`), then restart your MCP client. `readonly` controls tool visibility only: `ssh_run` can still execute mutating shell commands, so it is not a security sandbox. Unrecognised profiles fall back to `lite`. `target` accepts a profile name or raw `user@host`. Full parameter reference: [MCP-Tools wiki](https://github.com/rushikeshsakharleofficial/ssh-ops-mcp/wiki/MCP-Tools).
 
 ### Exec
 
