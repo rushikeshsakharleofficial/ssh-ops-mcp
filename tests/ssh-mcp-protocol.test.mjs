@@ -8,11 +8,14 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SERVER_SCRIPT = join(REPO_ROOT, "scripts/ssh-mcp-server.mjs");
 
-async function mcpRequest(msg) {
+async function mcpRequest(msg, envOverrides = {}) {
   return new Promise((res, rej) => {
+    const env = { ...process.env, SSH_OPS_AUTO_UPDATE: "0" };
+    delete env.SSH_OPS_PROFILE;
+    Object.assign(env, envOverrides);
     const child = spawn(process.execPath, [SERVER_SCRIPT], {
       stdio: ["pipe", "pipe", "ignore"],
-      env: { ...process.env, SSH_OPS_AUTO_UPDATE: "0" }
+      env
     });
 
     const rl = createInterface({ input: child.stdout });
@@ -58,7 +61,7 @@ test("initialize returns protocolVersion and serverInfo.name ssh-ops", async () 
   assert.ok(res.result.protocolVersion, "should echo a protocolVersion");
 });
 
-test("tools/list returns array of at least 20 tools", async () => {
+test("tools/list exposes only eight essential tools by default", async () => {
   const res = await mcpRequest({
     jsonrpc: "2.0",
     id: 2,
@@ -67,10 +70,11 @@ test("tools/list returns array of at least 20 tools", async () => {
   });
   assert.ok(res.result, "should have result");
   assert.ok(Array.isArray(res.result.tools), "tools should be an array");
-  assert.ok(res.result.tools.length >= 20, `expected >=20 tools, got ${res.result.tools.length}`);
-  const names = res.result.tools.map((t) => t.name);
-  assert.ok(names.includes("ssh_run"), "should include ssh_run");
-  assert.ok(names.includes("ssh_profiles"), "should include ssh_profiles");
+  const names = res.result.tools.map((t) => t.name).sort();
+  assert.deepEqual(names, [
+    "ssh_add_profile", "ssh_disk_report", "ssh_health_report", "ssh_log_search",
+    "ssh_profiles", "ssh_run", "ssh_run_multi", "ssh_tail"
+  ], "default catalogue must stay small and useful");
 });
 
 test("unknown method returns JSON-RPC error", async () => {
@@ -166,14 +170,42 @@ test("validateInput: backtick in target is rejected (interpolated field)", async
   assert.ok(text.includes("must not contain backticks"), "backtick in target should fail validation");
 });
 
-test("tools/list includes extra module tools (ssh_compose, ssh_k8s)", async () => {
+test("full profile retains specialised module tools", async () => {
   const res = await mcpRequest({
     jsonrpc: "2.0",
     id: 5,
     method: "tools/list",
     params: {}
-  });
+  }, { SSH_OPS_PROFILE: "full" });
   const names = res.result?.tools?.map((t) => t.name) ?? [];
-  assert.ok(names.includes("ssh_compose") || names.includes("ssh_k8s"),
-    `expected extra module tools in list, got: ${names.join(", ").slice(0, 200)}`);
+  assert.ok(names.includes("ssh_compose") && names.includes("ssh_k8s"),
+    "full profile must retain advanced container tooling");
+  assert.ok(names.length >= 90, `full mode should retain complete functionality; found ${names.length}`);
+});
+
+test("unknown profile fails closed rather than exposing all tools", async () => {
+  const res = await mcpRequest({
+    jsonrpc: "2.0", id: 9, method: "tools/list", params: {}
+  }, { SSH_OPS_PROFILE: "fulll" });
+  assert.equal(res.result.tools.length, 8);
+});
+
+test("a tool hidden from tools/list cannot be invoked", async () => {
+  const res = await mcpRequest({
+    jsonrpc: "2.0", id: 10, method: "tools/call",
+    params: { name: "ssh_k8s", arguments: {} }
+  });
+  assert.equal(res.result.isError, true);
+  assert.match(res.result.content[0].text, /Unknown tool/);
+});
+
+test("default MCP tool schema is substantially smaller than full", async () => {
+  const request = { jsonrpc: "2.0", id: 11, method: "tools/list", params: {} };
+  const lite = await mcpRequest(request);
+  const full = await mcpRequest(request, { SSH_OPS_PROFILE: "full" });
+  const liteBytes = Buffer.byteLength(JSON.stringify(lite.result.tools));
+  const fullBytes = Buffer.byteLength(JSON.stringify(full.result.tools));
+  assert.ok(liteBytes < fullBytes * 0.3,
+    `expected at least 70% tool-schema byte reduction; got ${liteBytes} vs ${fullBytes}`);
+  console.log(`MCP tool schema bytes: lite=${liteBytes}, full=${fullBytes}; reduction=${(100 * (1 - liteBytes / fullBytes)).toFixed(1)}% (bytes, not billed tokens)`);
 });
