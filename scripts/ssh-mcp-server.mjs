@@ -69,16 +69,18 @@ import { dirname, join, resolve as pathResolve, sep as pathSep } from "node:path
 // ── Profile-based tool filtering ─────────────────────────────────────────────
 const _profileArg = (() => {
   const idx = process.argv.indexOf("--profile");
-  if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1].toLowerCase();
-  return process.env.SSH_OPS_PROFILE || "full";
+  const requested = (idx >= 0 ? process.argv[idx + 1] : null) || process.env.SSH_OPS_PROFILE || "lite";
+  const profile = String(requested).trim().toLowerCase();
+  // Unknown profiles must never silently expose all MCP tools.
+  return ["lite", "readonly", "full"].includes(profile) ? profile : "lite";
 })();
 
 const LITE_TOOLS = new Set([
-  "ssh_run", "ssh_log_search", "ssh_tail", "ssh_health_report",
-  "ssh_disk_report", "ssh_profiles"
+  "ssh_run", "ssh_run_multi", "ssh_add_profile", "ssh_log_search",
+  "ssh_tail", "ssh_health_report", "ssh_disk_report", "ssh_profiles"
 ]);
 const READONLY_TOOLS = new Set([
-  ...LITE_TOOLS,
+  ...[...LITE_TOOLS].filter(name => name !== "ssh_add_profile"),
   "ssh_inventory", "ssh_metrics", "ssh_memory_report", "ssh_file_read",
   "ssh_dmesg", "ssh_port_scan", "ssh_ssl_cert", "ssh_audit", "ssh_intrusion_check"
 ]);
@@ -95,12 +97,13 @@ const COMPACT_SKILL_INSTRUCTIONS = `\
 Profile: ${_profileArg} | Defaults: timeout=20s output=32KB stdout=100lines stderr=50lines
 
 ## Rules
-- Use ssh_run for bounded commands only. Add | head -n 50 to cap output.
+- Use ssh_run for bounded commands only; use ssh_run_multi for fleet queries. Add | head -n 50 to cap output.
+- Add a host with ssh_add_profile (confirm required). Advanced tools need --profile full and restart.
 - Use ssh_log_search instead of cat *.log or journalctl (auto-bounded).
 - Use ssh_tail with maxLines (not tail -f).
 - Use ssh_health_report / ssh_disk_report for status checks.
 - Blocked: tail -f, journalctl -f, docker logs -f, kubectl logs -f, unbounded logs, find /, ls -R /, grep -r /, watch, while true.
-- /compact after any ssh batch. /clear when switching tasks.
+- /compact only when accumulated context is large; start a new chat for unrelated work.
 `;
 
 const PROTOCOL_VERSION = "2025-06-18";
