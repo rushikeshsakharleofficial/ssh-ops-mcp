@@ -23,7 +23,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Run tests
-        run: node --test tests/ssh-ops.test.mjs
+        run: node --test tests/*.test.mjs
 
       - name: Verify MCP server parses
         run: node --check scripts/ssh-mcp-server.mjs && node --check scripts/ssh-core.mjs
