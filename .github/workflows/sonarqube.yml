@@ -1,22 +1,36 @@
 name: SonarQube Analysis
-
 on:
   push:
-    branches: [ main ]
+    branches: [main, python-reengineer]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   sonarqube:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        continue-on-error: true
+      - name: Verify Sonar token is configured
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::SONAR_TOKEN secret is missing. Configure it in GitHub Actions secrets."
+            exit 1
+          fi
+
+      - name: SonarQube Cloud scan and quality gate
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
