@@ -82,5 +82,18 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("example.org", log)
 
 
+class MigrationTests(unittest.TestCase):
+    def test_legacy_import_skips_secrets(self):
+        from ssh_ops.migrate import import_legacy
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / "ssh-ops-profiles"
+            folder.mkdir()
+            (folder / "_index.json").write_text(json.dumps({"profileNames": ["good", "secret"]}))
+            (folder / "good.json").write_text(json.dumps({"host": "example.org", "user": "ops"}))
+            (folder / "secret.json").write_text(json.dumps({"host": "example.org", "user": "ops", "encryptedPassword": "v1:xxx"}))
+            result = import_legacy(folder, apply=False)
+            self.assertEqual(result["imported"], ["good"])
+            self.assertEqual(result["skipped"], ["secret"])
+
 if __name__ == "__main__":
     unittest.main()
