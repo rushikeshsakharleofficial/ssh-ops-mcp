@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssh-ops-mcp"
+version = "2.0.0a1"
+description = "Minimal, secure SSH operations over MCP"
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.0,<3"]
+
+[project.scripts]
+ssh-ops-mcp = "ssh_ops.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
