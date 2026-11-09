@@ -290,7 +290,7 @@ def log_search(target: str, pattern: str = "", unit: str = "", lines: int = 50) 
         raise ValueError("ssh_log_search currently supports Linux journald only")
     if type(lines) is not int or not 1 <= lines <= 100:
         raise ValueError("Log line limit must be between 1 and 100")
-    if not isinstance(pattern, str) or len(pattern) > 80 or any(c in pattern for c in "\\x00\\r\\n"):
+    if not isinstance(pattern, str) or len(pattern) > 80 or any(c in pattern for c in "\x00\r\n"):
         raise ValueError("Invalid search pattern")
     if unit and (not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]{1,100}", unit)):
         raise ValueError("Invalid systemd unit")
