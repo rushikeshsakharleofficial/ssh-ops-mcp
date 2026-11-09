@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,29 +150,53 @@ def ssh_options(p: dict) -> list[str]:
 
 
 def _run(argv: list[str], *, stdin: bytes | None = None, timeout: int = 20) -> dict:
+    """Run without shell interpolation, bounded memory, or blocking stdin writes."""
     if type(timeout) is not int or not 1 <= timeout <= 300:
         raise ValueError("Timeout must be between 1 and 300 seconds")
-    # Drain each pipe continuously but keep only MAX_BYTES in memory.
-    process = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    process = subprocess.Popen(
+        argv, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+    )
     output: dict[str, bytes] = {}
+    truncated: dict[str, bool] = {}
+
     def drain(name: str, stream) -> None:
         chunks = bytearray()
+        did_truncate = False
         while block := stream.read(4096):
-            if len(chunks) < MAX_BYTES:
-                chunks.extend(block[:MAX_BYTES - len(chunks)])
+            available = MAX_BYTES - len(chunks)
+            if available < len(block):
+                did_truncate = True
+            if available > 0:
+                chunks.extend(block[:available])
         output[name] = bytes(chunks)
+        truncated[name] = did_truncate
         stream.close()
-    readers = [threading.Thread(target=drain, args=(name, stream), daemon=True)
-               for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))]
+
+    readers = [
+        threading.Thread(target=drain, args=(name, stream), daemon=True)
+        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))
+    ]
     for reader in readers:
         reader.start()
+
+    # A remote process may never read stdin. Writing on the caller thread
+    # would deadlock before process.wait(timeout) is reached.
+    writer = None
     if stdin is not None:
-        try:
-            process.stdin.write(stdin)
-            process.stdin.close()
-        except BrokenPipeError:
-            pass
+        def send_input() -> None:
+            try:
+                process.stdin.write(stdin)
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
+
+        writer = threading.Thread(target=send_input, daemon=True)
+        writer.start()
+
     timed_out = False
     try:
         code = process.wait(timeout=timeout)
@@ -179,10 +205,18 @@ def _run(argv: list[str], *, stdin: bytes | None = None, timeout: int = 20) -> d
         process.kill()
         process.wait()
         code = 124
+    if writer is not None:
+        writer.join(timeout=2)
     for reader in readers:
         reader.join(timeout=2)
-    return {"exit_code": code, "timeout": timed_out,
-            **{key: output.get(key, b"").decode("utf-8", "replace") for key in ("stdout", "stderr")}}
+    return {
+        "exit_code": code,
+        "timeout": timed_out,
+        "stdout": output.get("stdout", b"").decode("utf-8", "replace"),
+        "stderr": output.get("stderr", b"").decode("utf-8", "replace"),
+        "stdout_truncated": truncated.get("stdout", False),
+        "stderr_truncated": truncated.get("stderr", False),
+    }
 
 
 def execute(target: str, command: str, *, authorised: bool = False, confirm: bool = False, timeout: int = 20) -> dict:
@@ -247,3 +281,49 @@ def copy(target: str, source: str, destination: str, direction: str, recursive: 
     if result["exit_code"] != 0:
         incident("transfer_failure", target, result["exit_code"])
     return result
+
+
+def log_search(target: str, pattern: str = "", unit: str = "", lines: int = 50) -> dict:
+    """Search the last hour of journald with bounded, shell-quoted arguments."""
+    p = profile(target)
+    if p["shell"] != "sh":
+        raise ValueError("ssh_log_search currently supports Linux journald only")
+    if type(lines) is not int or not 1 <= lines <= 100:
+        raise ValueError("Log line limit must be between 1 and 100")
+    if not isinstance(pattern, str) or len(pattern) > 80 or any(c in pattern for c in "\\x00\\r\\n"):
+        raise ValueError("Invalid search pattern")
+    if unit and (not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]{1,100}", unit)):
+        raise ValueError("Invalid systemd unit")
+    command = "journalctl --no-pager --output=short-iso --since='1 hour ago' -n " + str(lines)
+    if unit:
+        command += " -u " + shlex.quote(unit)
+    if pattern:
+        command += " --grep=" + shlex.quote(pattern)
+    return execute(target, command, authorised=True, timeout=30)
+
+
+def fleet_health(targets: list[str]) -> list[dict]:
+    """Run fixed health diagnostics concurrently and return concise summaries."""
+    if (
+        not isinstance(targets, list) or not 1 <= len(targets) <= 20
+        or any(not isinstance(name, str) or not NAME.fullmatch(name) for name in targets)
+        or len(set(targets)) != len(targets)
+    ):
+        raise ValueError("Provide 1-20 unique valid SSH profile names")
+
+    def check(target: str) -> dict:
+        try:
+            result = health(target)
+            stdout = result.get("stdout", "")
+            preview = [line[:120] for line in stdout.splitlines()[:2]]
+            return {
+                "target": target, "ok": result.get("exit_code") == 0,
+                "timeout": bool(result.get("timeout", False)),
+                "preview": preview, "warnings": result.get("warnings", [])[:3],
+            }
+        except (OSError, ValueError, PermissionError):
+            incident("fleet_failure", target)
+            return {"target": target, "ok": False, "error": "Health check failed"}
+
+    with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
+        return list(pool.map(check, targets))
