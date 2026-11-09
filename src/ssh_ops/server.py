@@ -53,5 +53,17 @@ def ssh_incidents(limit: int = 20) -> list[dict]:
     return core.incidents(limit)
 
 
+@mcp.tool()
+def ssh_log_search(target: str, pattern: str = "", unit: str = "", lines: int = 50) -> dict:
+    """Find up to 100 journal entries from the last hour, with safe arguments."""
+    return core.log_search(target, pattern, unit, lines)
+
+
+@mcp.tool()
+def ssh_fleet_health(targets: list[str]) -> list[dict]:
+    """Summarise fixed health diagnostics on up to 20 server profiles."""
+    return core.fleet_health(targets)
+
+
 def main() -> None:
     mcp.run()  # stdio transport

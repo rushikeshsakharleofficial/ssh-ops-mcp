@@ -23,7 +23,24 @@ python3 -m venv .venv
 
 Configure your MCP client with the absolute path to `.venv/bin/ssh-ops-mcp` as a **stdio** MCP server. Avoid setting `SSH_OPS_ALLOW_WRITE=1` in everyday read-only sessions.
 
-Available MCP tools: `ssh_profiles`, `ssh_save_profile`, `ssh_remove_profile`, `ssh_health`, `ssh_run`, `ssh_copy`, `ssh_incidents`.
+Available MCP tools (nine): `ssh_profiles`, `ssh_save_profile`, `ssh_remove_profile`, `ssh_health`, `ssh_run`, `ssh_copy`, `ssh_incidents`, `ssh_log_search`, `ssh_fleet_health`.
+
+### Bounded diagnostics and process safety
+
+- `ssh_log_search(target, pattern="", unit="", lines=50)`: searches the last hour of Linux journald, at most 100 matching lines. Patterns are shell-quoted; journald handles filtering. This does not support Windows event logs.
+- `ssh_fleet_health(targets=["web1", "web2"])`: fixed diagnostics across 1–20 unique profiles, at most four concurrent SSH calls, returns concise status per server instead of full reports.
+- The subprocess executor drains stdout/stderr continuously to a 32 KiB cap per stream, reports truncation, and enforces timeouts even when the remote process does not read stdin.
+- Log results and command output can contain sensitive information from remote systems. Restrict SSH account privileges and invoke diagnostics only on authorised servers.
+
+### Module selection
+
+- **Official MCP Python SDK v2** handles protocol, schema and stdio.
+- **sqlite3, shlex, concurrent.futures, subprocess** in the standard library handle private metadata, shell quoting, parallel health checks and process execution.
+- **System OpenSSH** supplies SSH-agent authentication, known_hosts checking, ProxyJump, ControlMaster and native SCP/SFTP without a remote agent or second SSH stack.
+- **Ruff, Bandit, pip-audit and CodeQL** run as CI-only development tooling.
+
+Paramiko and AsyncSSH are intentionally not added: both duplicate transport provided by locally maintained OpenSSH and increase the security/dependency surface. Review this choice only if native connection support delivers a measurable compatibility or performance improvement.
+
 
 For a read-only connection use `ssh_save_profile(name="lab", host="server.example.org", username="ops", confirm=true)` and `ssh_health(target="lab")`. Use an SSH key in the SSH agent or provide an absolute `identity_file` path. For a bastion, use `jump_host` (OpenSSH `-J`) or your existing SSH config.
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssh-ops-mcp"
-version = "2.0.0a1"
+version = "2.0.0a2"
 description = "Minimal, secure SSH operations over MCP"
 requires-python = ">=3.11"
 dependencies = ["mcp>=2.0,<3"]
